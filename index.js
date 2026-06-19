@@ -19,13 +19,13 @@ const {
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const express = require('express');
 const ExcelJS = require('exceljs');
 const axios = require('axios');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.PORT) || 3001;
+// PORT is used by server.js — bot doesn't need its own Express
+const PORT = 3001;
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923299931199';
 const SESSION_DIR = path.join(__dirname, 'session');
 const OUTBOX_PATH = path.join(__dirname, 'data', 'outbox.json');
@@ -648,17 +648,6 @@ async function startBot() {
     }
   });
 }
-
-// ─── Minimal Express for health check (bot's own port) ───────────────────────
-
-const botApp = express();
-botApp.get('/', (req, res) => {
-  res.json({ bot: 'running', uptime: Math.floor(process.uptime()) + 's' });
-});
-
-botApp.listen(PORT, () => {
-  console.log('[BOT] Express health check on port ' + PORT);
-});
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 
