@@ -1,0 +1,9 @@
+node_modules/
+session/
+.env
+*.log
+.replit
+replit.nix
+.cache/
+tmp/
+temp/
