@@ -19,17 +19,24 @@ const {
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const express = require('express');
 const ExcelJS = require('exceljs');
 const axios = require('axios');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-// PORT is used by server.js — bot doesn't need its own Express
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
+const API_SECRET = process.env.API_SECRET || 'banu-saeed-secret-2024';
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923299931199';
 const SESSION_DIR = path.join(__dirname, 'session');
 const OUTBOX_PATH = path.join(__dirname, 'data', 'outbox.json');
 const GITHUB_RAW = 'https://raw.githubusercontent.com/hasilpurofficial4-creator/zaid2/main/data';
+
+// ─── State ──────────────────────────────────────────────────────────────────
+
+let whatsappConnected = false;
+let sockRef = null;
+let botLogs = [];
 
 // ─── Outbox Helpers ──────────────────────────────────────────────────────────
 
@@ -338,6 +345,8 @@ async function startBot() {
     }
 
     if (connection === 'open') {
+      whatsappConnected = true;
+      sockRef = sock;
       console.log('═══════════════════════════════════════════');
       console.log('  WhatsApp Bot CONNECTED');
       console.log('  Account: ' + (sock.user?.id || 'unknown'));
@@ -355,6 +364,7 @@ async function startBot() {
           const r = await processOutbox(sock);
           if (r.processed > 0) {
             console.log('[OUTBOX] Auto-send: ' + r.processed + ' sent');
+            botLogs.push('[OUTBOX] Auto-send: ' + r.processed + ' sent');
           }
         } catch (err) {
           console.error('[OUTBOX] Auto-send error:', err.message);
@@ -363,6 +373,7 @@ async function startBot() {
     }
 
     if (connection === 'close') {
+      whatsappConnected = false;
       const reason = lastDisconnect?.error?.output?.statusCode;
       console.log('[CONN] Connection closed. Reason code: ' + reason);
 
@@ -649,16 +660,150 @@ async function startBot() {
   });
 }
 
-// ─── Start ───────────────────────────────────────────────────────────────────
+// ─── Express API Server ─────────────────────────────────────────────────────
+
+const app = express();
+app.use(express.json());
+
+// Auth middleware
+function authMiddleware(req, res, next) {
+  const { secret } = req.body;
+  if (secret !== API_SECRET) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+  next();
+}
+
+// Health check
+app.get('/', (req, res) => {
+  const outbox = readOutbox();
+  const pending = outbox.filter(m => !m.sent).length;
+  res.json({
+    status: 'online',
+    service: 'Banu Saeed Hospital WhatsApp API',
+    whatsappConnected,
+    uptime: Math.floor(process.uptime()) + 's',
+    pendingMessages: pending
+  });
+});
+
+// Status endpoint
+app.get('/status', (req, res) => {
+  const outbox = readOutbox();
+  const pending = outbox.filter(m => !m.sent).length;
+  const sent = outbox.filter(m => m.sent).length;
+  res.json({
+    online: true,
+    botRunning: true,
+    whatsappConnected,
+    pendingMessages: pending,
+    sentMessages: sent,
+    adminNumber: ADMIN_NUMBER,
+    uptime: Math.floor(process.uptime()) + 's',
+    recentLogs: botLogs.slice(-10)
+  });
+});
+
+// Send message (queues for auto-send)
+app.post('/send', authMiddleware, (req, res) => {
+  try {
+    const { message, to } = req.body;
+    if (!message) return res.status(400).json({ success: false, error: 'message is required' });
+
+    const target = (to || ADMIN_NUMBER).replace(/[^0-9]/g, '');
+    if (target.length < 7) return res.status(400).json({ success: false, error: 'Invalid phone number' });
+
+    const outbox = readOutbox();
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+      to: target,
+      message: message,
+      sent: false,
+      queuedAt: new Date().toISOString(),
+      sentAt: null,
+      error: null
+    };
+    outbox.push(entry);
+
+    const cleaned = outbox.filter(m => !m.sent || (Date.now() - new Date(m.sentAt).getTime() < 3600000));
+    writeOutbox(cleaned.length > 200 ? cleaned.slice(-200) : cleaned);
+
+    console.log('[QUEUE] Queued for +' + target + ' (' + entry.id + ')');
+
+    // If WhatsApp is connected, send immediately
+    if (whatsappConnected && sockRef) {
+      processImmediateSend(sockRef, entry).catch(err => {
+        console.error('[QUEUE] Immediate send failed:', err.message);
+      });
+    }
+
+    res.json({ success: true, message: 'Message queued for +' + target, id: entry.id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Pair endpoint
+app.post('/pair', authMiddleware, (req, res) => {
+  res.json({
+    success: true,
+    message: 'Check Railway logs for QR code. Scan in WhatsApp > Linked Devices > Link a Device.'
+  });
+});
+
+// Debug endpoint
+app.get('/debug', (req, res) => {
+  res.json({
+    online: true,
+    botRunning: true,
+    whatsappConnected,
+    uptime: Math.floor(process.uptime()) + 's',
+    nodeVersion: process.version,
+    env: {
+      PORT: process.env.PORT || '3001 (default)',
+      SESSION_ID: process.env.SESSION_ID ? 'SET (' + process.env.SESSION_ID.substring(0, 8) + '...)' : 'NOT SET',
+      API_SECRET: process.env.API_SECRET ? 'SET' : 'NOT SET',
+      ADMIN_NUMBER: process.env.ADMIN_NUMBER || '923299931199 (default)',
+    },
+    recentLogs: botLogs.slice(-20)
+  });
+});
+
+// Immediate send helper
+async function processImmediateSend(sock, entry) {
+  try {
+    const target = entry.to.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+    await sock.sendMessage(target, { text: entry.message });
+    entry.sent = true;
+    entry.sentAt = new Date().toISOString();
+    entry.error = null;
+    console.log('[SEND] Immediate send to +' + entry.to);
+    // Update outbox
+    const outbox = readOutbox();
+    const idx = outbox.findIndex(m => m.id === entry.id);
+    if (idx >= 0) outbox[idx] = entry;
+    writeOutbox(outbox);
+  } catch (err) {
+    console.error('[SEND] Immediate send error:', err.message);
+    throw err;
+  }
+}
+
+// ─── Start Express + Bot ────────────────────────────────────────────────────
 
 console.log('═══════════════════════════════════════════════');
 console.log('  BANU SAEED HOSPITAL - WhatsApp Bot');
 console.log('  Admin: +' + ADMIN_NUMBER);
+console.log('  API Port: ' + PORT);
 console.log('═══════════════════════════════════════════════');
 
-startBot().catch(err => {
-  console.error('[FATAL] Bot failed to start:', err.message);
-  process.exit(1);
+// Start Express server FIRST (Railway needs this)
+app.listen(PORT, () => {
+  console.log('[SERVER] API listening on port ' + PORT);
+  // Then start WhatsApp bot
+  startBot().catch(err => {
+    console.error('[FATAL] Bot failed to start:', err.message);
+  });
 });
 
 // Prevent crashes
