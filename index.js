@@ -14,8 +14,6 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  generateWAMessageFromContent,
-  prepareWAMessageMedia,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
@@ -23,6 +21,14 @@ const path = require('path');
 const express = require('express');
 const ExcelJS = require('exceljs');
 const axios = require('axios');
+
+// Button support via kango-wa
+let sendButtons;
+try {
+  sendButtons = require('kango-wa').sendButtons;
+} catch (_) {
+  sendButtons = null;
+}
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -1097,111 +1103,33 @@ async function startBot() {
         await sock.sendMessage(chatId, { text: helpMsg });
       }
 
-      // ─── ZAID Interactive Buttons (NativeFlow - 100% working) ──────────
+      // ─── ZAID Interactive Buttons (via kango-wa) ────────────────────────
       if (cmd === 'zaid') {
-        try {
-          const btnMsg = generateWAMessageFromContent(chatId, {
-            viewOnceMessage: {
-              message: {
-                interactiveMessage: {
-                  header: {
-                    title: '🤖 *' + BOT_NAME + '*',
-                    subtitle: 'Stock Management Bot'
-                  },
-                  body: {
-                    text: '👋 Welcome! Tap a button below to get started:'
-                  },
-                  footer: {
-                    text: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER
-                  },
-                  nativeFlowMessage: {
-                    buttons: [
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '📦 Items Excel',
-                          id: 'items'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '📝 Items Text',
-                          id: 'items2'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '💰 Wallet Excel',
-                          id: 'wallet'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '💵 Wallet Text',
-                          id: 'wallet2'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '👷 Person Excel',
-                          id: 'person'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '📝 Person Text',
-                          id: 'person2'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '🔧 Maintenance',
-                          id: 'maintenance'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '🧪 Samples',
-                          id: 'samples'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '✂️ Clipping',
-                          id: 'clipping'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '💰 Salary Zaid',
-                          id: 'salary zaid'
-                        })
-                      },
-                      {
-                        name: 'quick_reply',
-                        buttonParamsJson: JSON.stringify({
-                          display_text: '❓ All Commands',
-                          id: 'help'
-                        })
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          }, { user: sock.user });
-          await sock.relayMessage(chatId, btnMsg.message, {});
-        } catch (btnErr) {
-          // Fallback: send plain text menu
+        if (sendButtons) {
+          try {
+            await sendButtons(sock, chatId, {
+              text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap a button below:',
+              footer: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER,
+              buttons: [
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📦 Items Excel', id: 'items' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Items Text', id: 'items2' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Wallet Excel', id: 'wallet' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💵 Wallet Text', id: 'wallet2' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '👷 Person Excel', id: 'person' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Person Text', id: 'person2' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🔧 Maintenance', id: 'maintenance' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧪 Samples', id: 'samples' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '✂️ Clipping', id: 'clipping' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Salary Zaid', id: 'salary zaid' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '❓ All Commands', id: 'help' }) },
+              ]
+            });
+          } catch (btnErr) {
+            log('[ZAID] Button send error: ' + btnErr.message);
+            await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, items2, wallet, wallet2, person, person2, maintenance, samples, clipping, salary zaid, help' });
+          }
+        } else {
+          // No kango-wa available, send plain text
           await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, items2, wallet, wallet2, person, person2, maintenance, samples, clipping, salary zaid, help' });
         }
       }
