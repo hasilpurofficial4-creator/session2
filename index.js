@@ -910,7 +910,9 @@ async function startBot() {
 
       // .salary - Calculate salary for a person
       if (cmd === 'salary') {
+        const ZAID_SALARY = 42000;
         // Format: .salary,{name},{monthly_salary} or .salary {name} {monthly_salary}
+        // Special: .salary zaid (no salary needed, fixed 42000)
         const raw = stripped.substring(parts[0].length).trim();
         let name = '', salaryStr = '';
         if (raw.includes(',')) {
@@ -922,14 +924,20 @@ async function startBot() {
           name = salaryParts[0] || '';
           salaryStr = salaryParts[1] || '';
         }
-        if (!name || !salaryStr) {
-          await sock.sendMessage(chatId, { text: '💰 *Salary Calculator*\n\nUsage: `salary,{name},{monthly_salary}`\nExample: `salary,ADNAN,25000`\n\nOr: `salary ADNAN 25000`' });
+        const isZaid = name.toUpperCase() === 'ZAID';
+        if (!name || (!salaryStr && !isZaid)) {
+          await sock.sendMessage(chatId, { text: '💰 *Salary Calculator*\n\nUsage: `salary,{name},{monthly_salary}`\nExample: `salary,ADNAN,25000`\n\nSpecial: `salary zaid` (fixed Rs. 42,000)' });
           return;
         }
-        const monthlySalary = parseFloat(salaryStr);
-        if (isNaN(monthlySalary) || monthlySalary <= 0) {
-          await sock.sendMessage(chatId, { text: '❌ Invalid salary amount. Example: `salary,ADNAN,25000`' });
-          return;
+        let monthlySalary;
+        if (isZaid) {
+          monthlySalary = ZAID_SALARY;
+        } else {
+          monthlySalary = parseFloat(salaryStr);
+          if (isNaN(monthlySalary) || monthlySalary <= 0) {
+            await sock.sendMessage(chatId, { text: '❌ Invalid salary amount. Example: `salary,ADNAN,25000`' });
+            return;
+          }
         }
         await sock.sendMessage(chatId, { text: '💰 Calculating salary for *' + name.toUpperCase() + '*...' });
 
@@ -939,46 +947,48 @@ async function startBot() {
             await sock.sendMessage(chatId, { text: '❌ No attendance data found.' });
             return;
           }
-          // Find person case-insensitive
-          const personName = personData.find(e => (e.personName || '').toUpperCase() === name.toUpperCase());
-          if (!personName) {
-            await sock.sendMessage(chatId, { text: '❌ Person "' + name + '" not found in attendance records.' });
-            return;
-          }
-          const actualName = personName.personName;
 
-          // Determine pay period: 6th of month to 5th of next month
+          // Always use previous full month (1st to last day)
           const today = new Date();
-          const currentDay = today.getDate();
-          let periodStart, periodEnd, dividerMonth;
-          if (currentDay <= 5) {
-            // We're in the early part of the month, use PREVIOUS month as divider base
-            periodStart = new Date(today.getFullYear(), today.getMonth() - 1, 6);
-            periodEnd = new Date(today.getFullYear(), today.getMonth(), 5, 23, 59, 59, 999);
-            dividerMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          const periodStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          const periodEnd = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59, 999);
+          const daysInMonth = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+          const monthName = periodStart.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+          let daysWorked = 0;
+          let absents = 0;
+          const actualName = isZaid ? 'ZAID' : '';
+
+          if (!isZaid) {
+            // Find person case-insensitive
+            const personName = personData.find(e => (e.personName || '').toUpperCase() === name.toUpperCase());
+            if (!personName) {
+              await sock.sendMessage(chatId, { text: '❌ Person "' + name + '" not found in attendance records.' });
+              return;
+            }
+            const realName = personName.personName;
+
+            // Count days worked in the previous full month
+            const personEntries = personData
+              .filter(e => e.personName === realName && e.action === 'enter')
+              .map(e => ({ ...e, _date: new Date(e.timestamp) }))
+              .filter(e => e._date >= periodStart && e._date <= periodEnd);
+
+            const workDates = new Set();
+            personEntries.forEach(e => {
+              workDates.add(e._date.toDateString());
+            });
+            daysWorked = workDates.size;
+            absents = daysInMonth - daysWorked;
+
+            // Update actualName for display
+            name = realName;
           } else {
-            // We're past the 5th, use CURRENT month as divider base
-            periodStart = new Date(today.getFullYear(), today.getMonth(), 6);
-            periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 5, 23, 59, 59, 999);
-            dividerMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+            // ZAID: 0 absents, full month salary
+            daysWorked = daysInMonth;
+            absents = 0;
           }
-          const daysInMonth = new Date(dividerMonth.getFullYear(), dividerMonth.getMonth() + 1, 0).getDate();
-          const monthName = dividerMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
 
-          // Count days worked in the period
-          const personEntries = personData
-            .filter(e => e.personName === actualName && e.action === 'enter')
-            .map(e => ({ ...e, _date: new Date(e.timestamp) }))
-            .filter(e => e._date >= periodStart && e._date <= periodEnd);
-
-          // Count unique work dates
-          const workDates = new Set();
-          personEntries.forEach(e => {
-            workDates.add(e._date.toDateString());
-          });
-          const daysWorked = workDates.size;
-
-          // Calculate salary
           const dailyRate = monthlySalary / daysInMonth;
           const earnedSalary = Math.round(dailyRate * daysWorked);
           const periodStartStr = periodStart.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
@@ -987,7 +997,7 @@ async function startBot() {
           const msg = [
             '💰 ✦ *' + toBold('SALARY CALCULATOR') + '* ✦ 💰',
             LINE,
-            '👤 *Name:* ' + actualName,
+            '👤 *Name:* ' + (isZaid ? actualName + ' ⭐' : name),
             '💵 *Monthly Salary:* Rs. ' + monthlySalary.toLocaleString(),
             '📅 *Period:* ' + periodStartStr + ' — ' + periodEndStr,
             '📆 *Month:* ' + monthName + ' (' + daysInMonth + ' days)',
@@ -995,12 +1005,14 @@ async function startBot() {
             '📊 *' + toBold('CALCULATION') + '*',
             THIN,
             '📅 *Days Worked:* ' + daysWorked,
+            '❌ *Absents:* ' + absents,
             '💰 *Daily Rate:* Rs. ' + Math.round(dailyRate).toLocaleString() + ' (' + monthlySalary.toLocaleString() + ' ÷ ' + daysInMonth + ')',
             THIN,
             '✅ *Total Salary:* Rs. ' + earnedSalary.toLocaleString(),
             '📝 *Formula:* ' + daysWorked + ' × ' + Math.round(dailyRate).toLocaleString() + ' = ' + earnedSalary.toLocaleString(),
+            isZaid ? '⭐ *ZAID: 0 absents, full month salary*' : '',
             FOOTER
-          ].join('\n');
+          ].filter(Boolean).join('\n');
           await sock.sendMessage(chatId, { text: msg });
         } catch (err) {
           await sock.sendMessage(chatId, { text: '❌ Error calculating salary: ' + err.message });
