@@ -105,8 +105,8 @@ const LINE = '╔═════════════════════
 const DIV  = '╠══════════════════════════════════╣';
 const END  = '╚══════════════════════════════════╝';
 const THIN = '──────────────────────────────────';
-const FOOTER = '\n' + END + '\n🏢 *' + BOT_NAME + '*\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
-const CAPTION_FOOTER = '\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
+const FOOTER = '\n📱 Admin: +' + ADMIN_NUMBER;
+const CAPTION_FOOTER = '\n📱 Admin: +' + ADMIN_NUMBER;
 
 // Unicode Mathematical Bold converter for cool headers
 function toBold(str) {
