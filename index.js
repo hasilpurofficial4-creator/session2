@@ -1088,36 +1088,53 @@ async function startBot() {
         await sock.sendMessage(chatId, { text: helpMsg });
       }
 
-      // ─── ZAID Interactive Buttons ────────────────────────────────────────
+      // ─── ZAID Interactive Menu (List Message - 100% supported) ──────────
       if (cmd === 'zaid') {
-        const buttonMsg = {
-          text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap a button below to get started:',
+        const listMsg = {
+          text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap the button below and select an option:',
           footer: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER,
-          buttons: [
-            { buttonId: 'items', buttonText: { displayText: '📦 Items Excel' }, type: 1 },
-            { buttonId: 'items2', buttonText: { displayText: '📝 Items Text' }, type: 1 },
-            { buttonId: 'wallet', buttonText: { displayText: '💰 Wallet Excel' }, type: 1 },
-            { buttonId: 'wallet2', buttonText: { displayText: '💵 Wallet Text' }, type: 1 },
-            { buttonId: 'person', buttonText: { displayText: '👷 Person Excel' }, type: 1 }
+          buttonText: '📋 Menu',
+          sections: [
+            {
+              title: '📦 Stock & Inventory',
+              rows: [
+                { title: '📦 Items Excel', rowId: 'items', description: 'Download items.xlsx' },
+                { title: '📝 Items Text', rowId: 'items2', description: 'Items text details' }
+              ]
+            },
+            {
+              title: '💰 Wallet & Finance',
+              rows: [
+                { title: '💰 Wallet Excel', rowId: 'wallet', description: 'Wallet IN/OUT Excel file' },
+                { title: '💵 Wallet Text', rowId: 'wallet2', description: 'Wallet text details' }
+              ]
+            },
+            {
+              title: '👷 Attendance',
+              rows: [
+                { title: '👷 Person Excel', rowId: 'person', description: 'Attendance Excel file' },
+                { title: '📝 Person Text', rowId: 'person2', description: 'Attendance text details' }
+              ]
+            },
+            {
+              title: '🔧 Maintenance & Samples',
+              rows: [
+                { title: '🔧 Maintenance', rowId: 'maintenance', description: 'Maintenance Excel file' },
+                { title: '🧪 Samples', rowId: 'samples', description: 'Samples Excel file' },
+                { title: '✂️ Clipping', rowId: 'clipping', description: 'Clipping Excel file' }
+              ]
+            },
+            {
+              title: '💰 Salary & Help',
+              rows: [
+                { title: '💰 Salary Zaid', rowId: 'salary zaid', description: 'Calculate ZAID salary (Rs. 42,000)' },
+                { title: '❓ All Commands', rowId: 'help', description: 'View all bot commands' }
+              ]
+            }
           ],
           headerType: 1
         };
-        await sock.sendMessage(chatId, buttonMsg);
-
-        // Send a second row of buttons
-        const buttonMsg2 = {
-          text: '⬇️ More options:',
-          footer: '🌐 ' + SITE_URL,
-          buttons: [
-            { buttonId: 'person2', buttonText: { displayText: '👷 Person Text' }, type: 1 },
-            { buttonId: 'maintenance', buttonText: { displayText: '🔧 Maint. Excel' }, type: 1 },
-            { buttonId: 'samples', buttonText: { displayText: '🧪 Samples Excel' }, type: 1 },
-            { buttonId: 'clipping', buttonText: { displayText: '✂️ Clipping Excel' }, type: 1 },
-            { buttonId: 'help', buttonText: { displayText: '❓ Help' }, type: 1 }
-          ],
-          headerType: 1
-        };
-        await sock.sendMessage(chatId, buttonMsg2);
+        await sock.sendMessage(chatId, listMsg);
       }
 
       // ─── TILLA Search ────────────────────────────────────────────────────
