@@ -236,6 +236,114 @@ function formatClippingText(data) {
   return msg + FOOTER;
 }
 
+// ─── Bills Helpers ──────────────────────────────────────────────────────────
+
+function formatBillsText(bills, date) {
+  const total = bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+  const totalItems = bills.reduce((a, b) => a + (Array.isArray(b.items) ? b.items.length : 0), 0);
+  let msg = '🧾 ✦ *' + toBold('BILLS — ' + (date || 'ALL').toUpperCase()) + '* ✦ 🧾\n' + LINE + '\n';
+  msg += '📦 *Bills:* ' + bills.length + ' | 📋 *Items:* ' + totalItems + ' | 💰 *Total:* Rs. ' + total.toLocaleString() + '\n' + DIV + '\n\n';
+  bills.forEach((b, i) => {
+    const items = Array.isArray(b.items) ? b.items : [];
+    msg += (i + 1) + '. 🧾 *' + (b.personName || 'N/A') + '* — ' + (b.billPurpose || 'N/A') + '\n';
+    msg += '   📅 ' + (b.date || 'N/A') + ' ' + (b.time || '') + '\n';
+    items.forEach((it, j) => {
+      msg += '   ' + (j + 1) + '. ' + (it.name || '') + ' × ' + (it.quantity || 1) + ' — Rs. ' + Number(it.price || 0).toLocaleString() + '\n';
+    });
+    msg += '   💰 *Total: Rs. ' + Number(b.totalAmount || 0).toLocaleString() + '*\n';
+    if (i < bills.length - 1) msg += '\n' + THIN + '\n';
+  });
+  return msg + FOOTER;
+}
+
+async function generateBillsXlsx(bills, date) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Bills');
+  ws.columns = [
+    { header: '#', key: 'no', width: 5 },
+    { header: 'Person', key: 'personName', width: 20 },
+    { header: 'Purpose', key: 'billPurpose', width: 18 },
+    { header: 'Items', key: 'itemsCount', width: 8 },
+    { header: 'Total (Rs.)', key: 'totalAmount', width: 14 },
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Time', key: 'time', width: 10 },
+  ];
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF10B981' } };
+  bills.forEach((b, i) => {
+    ws.addRow({
+      no: i + 1,
+      personName: b.personName || '',
+      billPurpose: b.billPurpose || '',
+      itemsCount: Array.isArray(b.items) ? b.items.length : 0,
+      totalAmount: Number(b.totalAmount) || 0,
+      date: b.date || '',
+      time: b.time || '',
+    });
+  });
+  const total = bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+  ws.addRow({});
+  const totalRow = ws.addRow({ no: '', personName: 'TOTAL', totalAmount: total });
+  totalRow.font = { bold: true, size: 12 };
+  await addExcelFooter(ws);
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
+async function generateBillImage(bills, date) {
+  const total = bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+  const dt = new Date(date + 'T00:00:00');
+  const dateLabel = dt.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  let billsHtml = '';
+  bills.forEach(b => {
+    const items = Array.isArray(b.items) ? b.items : [];
+    const itemRows = items.map(it =>
+      '<tr><td style="padding:6px 8px;border-bottom:1px dashed #e5e7eb;">' + (it.name || '') + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px dashed #e5e7eb;text-align:center;">' + (it.quantity || 1) + '</td>' +
+      '<td style="padding:6px 8px;border-bottom:1px dashed #e5e7eb;text-align:right;">Rs. ' + Number(it.price || 0).toLocaleString() + '</td></tr>'
+    ).join('');
+    billsHtml += '<div style="background:#fff;border:2px dashed #d1d5db;border-radius:12px;padding:16px;margin-bottom:16px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px dashed #e5e7eb;">' +
+      '<div><div style="font-weight:700;font-size:16px;">👤 ' + (b.personName || 'N/A') + '</div>' +
+      '<div style="font-size:12px;color:#6b7280;">📋 ' + (b.billPurpose || '') + '</div></div>' +
+      '<div style="font-size:12px;color:#6b7280;">🕐 ' + (b.time || '') + '</div></div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+      '<thead><tr style="background:#f9fafb;"><th style="padding:6px 8px;text-align:left;font-size:11px;color:#6b7280;">Item</th>' +
+      '<th style="padding:6px 8px;text-align:center;font-size:11px;color:#6b7280;">Qty</th>' +
+      '<th style="padding:6px 8px;text-align:right;font-size:11px;color:#6b7280;">Price</th></tr></thead>' +
+      '<tbody>' + itemRows + '</tbody></table>' +
+      '<div style="display:flex;justify-content:space-between;padding:10px 8px;margin-top:8px;background:#f0fdf4;border-radius:8px;font-weight:700;font-size:15px;color:#059669;">' +
+      '<span>Total</span><span>Rs. ' + Number(b.totalAmount || 0).toLocaleString() + '</span></div></div>';
+  });
+  const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;margin:0;padding:24px;background:#f8fafc;}</style></head><body>' +
+    '<div style="max-width:500px;margin:0 auto;">' +
+    '<div style="text-align:center;margin-bottom:20px;">' +
+    '<div style="font-size:22px;font-weight:800;color:#059669;">🧾 BILLS</div>' +
+    '<div style="font-size:14px;color:#6b7280;">' + dateLabel + '</div>' +
+    '<div style="font-size:13px;color:#059669;font-weight:600;margin-top:4px;">Grand Total: Rs. ' + total.toLocaleString() + '</div></div>' +
+    billsHtml +
+    '<div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:16px;">' + BOT_NAME + ' • ' + SITE_URL + '</div></div></body></html>';
+
+  // Try puppeteer, fallback to plain buffer
+  try {
+    const puppeteer = require('puppeteer');
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 600, height: 800, deviceScaleFactor: 2 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const body = await page.$('body');
+    const buf = await body.screenshot({ type: 'png' });
+    await browser.close();
+    return Buffer.from(buf);
+  } catch (puppeteerErr) {
+    log('[BILL-IMG] Puppeteer not available, generating simple image: ' + puppeteerErr.message);
+    throw new Error('Puppeteer not available');
+  }
+}
+
 // ─── Stock Manager Helpers ───────────────────────────────────────────────────
 
 async function fetchStockData(section) {
@@ -1103,35 +1211,179 @@ async function startBot() {
         await sock.sendMessage(chatId, { text: helpMsg });
       }
 
-      // ─── ZAID Interactive Buttons (via kango-wa) ────────────────────────
+      // ─── ZAID Interactive Buttons (hierarchical) ──────────────────────
       if (cmd === 'zaid') {
         if (sendButtons) {
           try {
             await sendButtons(sock, chatId, {
-              text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap a button below:',
+              text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap a category:',
               footer: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER,
               buttons: [
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📦 Items Excel', id: 'items' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Items Text', id: 'items2' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Wallet Excel', id: 'wallet' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💵 Wallet Text', id: 'wallet2' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '👷 Person Excel', id: 'person' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Person Text', id: 'person2' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🔧 Maintenance', id: 'maintenance' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧪 Samples', id: 'samples' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '✂️ Clipping', id: 'clipping' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Salary Zaid', id: 'salary zaid' }) },
-                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '❓ All Commands', id: 'help' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📦 Items', id: 'zaid_items' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '✂️ Clipping', id: 'zaid_clipping' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧪 Samples', id: 'zaid_samples' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Wallet', id: 'zaid_wallet' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧾 Bills', id: 'zaid_bills' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '❓ Help', id: 'help' }) },
               ]
             });
           } catch (btnErr) {
             log('[ZAID] Button send error: ' + btnErr.message);
-            await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, items2, wallet, wallet2, person, person2, maintenance, samples, clipping, salary zaid, help' });
+            await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, wallet, clipping, samples, bills, help' });
           }
         } else {
-          // No kango-wa available, send plain text
-          await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, items2, wallet, wallet2, person, person2, maintenance, samples, clipping, salary zaid, help' });
+          await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, wallet, clipping, samples, bills, help' });
         }
+      }
+
+      // ─── Category → Format buttons ───────────────────────────────────
+      if (cmd === 'zaid_items') {
+        if (sendButtons) {
+          await sendButtons(sock, chatId, {
+            text: '📦 *Items*\nChoose format:', footer: BOT_NAME,
+            buttons: [
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Text', id: 'items2' }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📊 Excel File', id: 'items' }) },
+            ]
+          });
+        } else { await sock.sendMessage(chatId, { text: 'Send: items (Excel) or items2 (Text)' }); }
+      }
+      if (cmd === 'zaid_clipping') {
+        if (sendButtons) {
+          await sendButtons(sock, chatId, {
+            text: '✂️ *Clipping*\nChoose format:', footer: BOT_NAME,
+            buttons: [
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Text', id: 'clipping2' }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📊 Excel File', id: 'clipping' }) },
+            ]
+          });
+        } else { await sock.sendMessage(chatId, { text: 'Send: clipping (Excel) or clipping2 (Text)' }); }
+      }
+      if (cmd === 'zaid_samples') {
+        if (sendButtons) {
+          await sendButtons(sock, chatId, {
+            text: '🧪 *Samples*\nChoose format:', footer: BOT_NAME,
+            buttons: [
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Text', id: 'samples2' }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📊 Excel File', id: 'samples' }) },
+            ]
+          });
+        } else { await sock.sendMessage(chatId, { text: 'Send: samples (Excel) or samples2 (Text)' }); }
+      }
+      if (cmd === 'zaid_wallet') {
+        if (sendButtons) {
+          await sendButtons(sock, chatId, {
+            text: '💰 *Wallet*\nChoose format:', footer: BOT_NAME,
+            buttons: [
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Text', id: 'wallet2' }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📊 Excel File', id: 'wallet' }) },
+            ]
+          });
+        } else { await sock.sendMessage(chatId, { text: 'Send: wallet (Excel) or wallet2 (Text)' }); }
+      }
+
+      // ─── Bills → Date buttons ─────────────────────────────────────────
+      if (cmd === 'zaid_bills') {
+        const billsData = await fetchStockData('bills');
+        if (!billsData.length) { await sock.sendMessage(chatId, { text: '🧾 No bills available yet.' }); return; }
+        const dates = [...new Set(billsData.map(b => b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : null)).filter(Boolean))].sort().reverse();
+        if (sendButtons && dates.length > 0) {
+          const dateButtons = dates.slice(0, 8).map(d => {
+            const dt = new Date(d + 'T00:00:00');
+            const label = dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+            return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📅 ' + label, id: 'bill_date_' + d }) };
+          });
+          await sendButtons(sock, chatId, {
+            text: '🧾 *Bills*\nSelect a date:', footer: BOT_NAME, buttons: dateButtons
+          });
+        } else {
+          await sock.sendMessage(chatId, { text: '🧾 *Bills dates:*\n' + dates.join('\n') });
+        }
+      }
+
+      // ─── Bill date selected → format buttons ─────────────────────────
+      if (cmd.startsWith('bill_date_')) {
+        const date = cmd.replace('bill_date_', '');
+        if (sendButtons) {
+          await sendButtons(sock, chatId, {
+            text: '🧾 *Bills — ' + date + '*\nChoose format:', footer: BOT_NAME,
+            buttons: [
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🖼️ Image', id: 'bill_img_' + date }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📝 Text', id: 'bill_txt_' + date }) },
+              { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📊 Excel', id: 'bill_xls_' + date }) },
+            ]
+          });
+        } else { await sock.sendMessage(chatId, { text: 'Formats: bill_txt_' + date + ' / bill_xls_' + date }); }
+      }
+
+      // ─── Bill text ──────────────────────────────────────────────────
+      if (cmd.startsWith('bill_txt_')) {
+        const date = cmd.replace('bill_txt_', '');
+        const billsData = await fetchStockData('bills');
+        const dateBills = billsData.filter(b => (b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : '')) === date);
+        if (!dateBills.length) { await sock.sendMessage(chatId, { text: '❌ No bills for ' + date }); return; }
+        await sock.sendMessage(chatId, { text: formatBillsText(dateBills, date) });
+      }
+
+      // ─── Bill Excel ──────────────────────────────────────────────────
+      if (cmd.startsWith('bill_xls_')) {
+        const date = cmd.replace('bill_xls_', '');
+        const billsData = await fetchStockData('bills');
+        const dateBills = billsData.filter(b => (b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : '')) === date);
+        if (!dateBills.length) { await sock.sendMessage(chatId, { text: '❌ No bills for ' + date }); return; }
+        const buf = await generateBillsXlsx(dateBills, date);
+        const tmpFile = path.join(__dirname, 'tmp', 'bills_' + date + '_' + Date.now() + '.xlsx');
+        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
+        fs.writeFileSync(tmpFile, buf);
+        const total = dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+        await sock.sendMessage(chatId, {
+          document: fs.readFileSync(tmpFile), fileName: 'bills_' + date + '.xlsx',
+          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          caption: '🧾 *BILLS — ' + date + '*\n📦 ' + dateBills.length + ' bills\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME
+        });
+        fs.unlinkSync(tmpFile);
+      }
+
+      // ─── Bill Image ──────────────────────────────────────────────────
+      if (cmd.startsWith('bill_img_')) {
+        const date = cmd.replace('bill_img_', '');
+        const billsData = await fetchStockData('bills');
+        const dateBills = billsData.filter(b => (b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : '')) === date);
+        if (!dateBills.length) { await sock.sendMessage(chatId, { text: '❌ No bills for ' + date }); return; }
+        await sock.sendMessage(chatId, { text: '🖼️ Generating bill image...' });
+        try {
+          const imgBuf = await generateBillImage(dateBills, date);
+          await sock.sendMessage(chatId, {
+            image: imgBuf,
+            caption: '🧾 *BILLS — ' + date + '*\n💰 Rs. ' + dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0).toLocaleString() + '\n🏢 ' + BOT_NAME
+          });
+        } catch (imgErr) {
+          log('[BILL-IMG] Error: ' + imgErr.message);
+          await sock.sendMessage(chatId, { text: '⚠️ Image failed, sending text.\n\n' + formatBillsText(dateBills, date) });
+        }
+      }
+
+      // ─── .bills direct command ───────────────────────────────────────
+      if (cmd === 'bills') {
+        const billsData = await fetchStockData('bills');
+        if (!billsData.length) { await sock.sendMessage(chatId, { text: '🧾 No bills data found.' }); return; }
+        const buf = await generateBillsXlsx(billsData, 'all');
+        const tmpFile = path.join(__dirname, 'tmp', 'bills_' + Date.now() + '.xlsx');
+        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
+        fs.writeFileSync(tmpFile, buf);
+        const total = billsData.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+        await sock.sendMessage(chatId, {
+          document: fs.readFileSync(tmpFile), fileName: 'bills.xlsx',
+          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          caption: '🧾 *BILLS* (' + billsData.length + ' | 💰 Rs. ' + total.toLocaleString() + ')\n🏢 ' + BOT_NAME
+        });
+        fs.unlinkSync(tmpFile);
+      }
+
+      if (cmd === 'bills2') {
+        const billsData = await fetchStockData('bills');
+        if (!billsData.length) { await sock.sendMessage(chatId, { text: '🧾 No bills data found.' }); return; }
+        await sock.sendMessage(chatId, { text: formatBillsText(billsData, 'all') });
       }
 
       // ─── TILLA Search ────────────────────────────────────────────────────
