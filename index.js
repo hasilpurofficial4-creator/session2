@@ -14,6 +14,8 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
+  generateWAMessageFromContent,
+  prepareWAMessageMedia,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
@@ -672,13 +674,20 @@ async function startBot() {
 
     const chatId = msg.key.remoteJid;
 
-    // Extract text from various message types (text, button clicks, list responses)
+    // Extract text from various message types (text, button clicks, list responses, native flow)
     let text = '';
-    if (msg.message.buttonsResponseMessage) {
-      // Button click → use the button ID as command text
+    const msgType = Object.keys(msg.message)[0];
+    if (msgType === 'interactiveResponseMessage') {
+      // Native flow button click
+      const ir = msg.message.interactiveResponseMessage;
+      if (ir.nativeFlowResponseMessage) {
+        try { text = JSON.parse(ir.nativeFlowResponseMessage.paramsJson).id || ''; } catch(e) { text = ''; }
+      } else { text = ir.body || ''; }
+    } else if (msgType === 'templateButtonReplyMessage') {
+      text = msg.message.templateButtonReplyMessage.selectedId || '';
+    } else if (msg.message.buttonsResponseMessage) {
       text = msg.message.buttonsResponseMessage.selectedButtonId || '';
     } else if (msg.message.listResponseMessage) {
-      // List selection → use the row ID
       text = msg.message.listResponseMessage.singleSelectReply?.selectedRowId || '';
     } else {
       text = msg.message.conversation
@@ -1088,53 +1097,113 @@ async function startBot() {
         await sock.sendMessage(chatId, { text: helpMsg });
       }
 
-      // ─── ZAID Interactive Menu (List Message - 100% supported) ──────────
+      // ─── ZAID Interactive Buttons (NativeFlow - 100% working) ──────────
       if (cmd === 'zaid') {
-        const listMsg = {
-          text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap the button below and select an option:',
-          footer: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER,
-          buttonText: '📋 Menu',
-          sections: [
-            {
-              title: '📦 Stock & Inventory',
-              rows: [
-                { title: '📦 Items Excel', rowId: 'items', description: 'Download items.xlsx' },
-                { title: '📝 Items Text', rowId: 'items2', description: 'Items text details' }
-              ]
-            },
-            {
-              title: '💰 Wallet & Finance',
-              rows: [
-                { title: '💰 Wallet Excel', rowId: 'wallet', description: 'Wallet IN/OUT Excel file' },
-                { title: '💵 Wallet Text', rowId: 'wallet2', description: 'Wallet text details' }
-              ]
-            },
-            {
-              title: '👷 Attendance',
-              rows: [
-                { title: '👷 Person Excel', rowId: 'person', description: 'Attendance Excel file' },
-                { title: '📝 Person Text', rowId: 'person2', description: 'Attendance text details' }
-              ]
-            },
-            {
-              title: '🔧 Maintenance & Samples',
-              rows: [
-                { title: '🔧 Maintenance', rowId: 'maintenance', description: 'Maintenance Excel file' },
-                { title: '🧪 Samples', rowId: 'samples', description: 'Samples Excel file' },
-                { title: '✂️ Clipping', rowId: 'clipping', description: 'Clipping Excel file' }
-              ]
-            },
-            {
-              title: '💰 Salary & Help',
-              rows: [
-                { title: '💰 Salary Zaid', rowId: 'salary zaid', description: 'Calculate ZAID salary (Rs. 42,000)' },
-                { title: '❓ All Commands', rowId: 'help', description: 'View all bot commands' }
-              ]
+        try {
+          const btnMsg = generateWAMessageFromContent(chatId, {
+            viewOnceMessage: {
+              message: {
+                interactiveMessage: {
+                  header: {
+                    title: '🤖 *' + BOT_NAME + '*',
+                    subtitle: 'Stock Management Bot'
+                  },
+                  body: {
+                    text: '👋 Welcome! Tap a button below to get started:'
+                  },
+                  footer: {
+                    text: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER
+                  },
+                  nativeFlowMessage: {
+                    buttons: [
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '📦 Items Excel',
+                          id: 'items'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '📝 Items Text',
+                          id: 'items2'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '💰 Wallet Excel',
+                          id: 'wallet'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '💵 Wallet Text',
+                          id: 'wallet2'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '👷 Person Excel',
+                          id: 'person'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '📝 Person Text',
+                          id: 'person2'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '🔧 Maintenance',
+                          id: 'maintenance'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '🧪 Samples',
+                          id: 'samples'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '✂️ Clipping',
+                          id: 'clipping'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '💰 Salary Zaid',
+                          id: 'salary zaid'
+                        })
+                      },
+                      {
+                        name: 'quick_reply',
+                        buttonParamsJson: JSON.stringify({
+                          display_text: '❓ All Commands',
+                          id: 'help'
+                        })
+                      }
+                    ]
+                  }
+                }
+              }
             }
-          ],
-          headerType: 1
-        };
-        await sock.sendMessage(chatId, listMsg);
+          }, { user: sock.user });
+          await sock.relayMessage(chatId, btnMsg.message, {});
+        } catch (btnErr) {
+          // Fallback: send plain text menu
+          await sock.sendMessage(chatId, { text: '🤖 *' + BOT_NAME + '*\n\nCommands: items, items2, wallet, wallet2, person, person2, maintenance, samples, clipping, salary zaid, help' });
+        }
       }
 
       // ─── TILLA Search ────────────────────────────────────────────────────
