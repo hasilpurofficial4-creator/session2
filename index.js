@@ -671,11 +671,22 @@ async function startBot() {
     if (!msg.message) return;
 
     const chatId = msg.key.remoteJid;
-    const text = msg.message.conversation
-      || msg.message.extendedTextMessage?.text
-      || '';
 
-    if (!text || text.trim().length < 2) return;
+    // Extract text from various message types (text, button clicks, list responses)
+    let text = '';
+    if (msg.message.buttonsResponseMessage) {
+      // Button click → use the button ID as command text
+      text = msg.message.buttonsResponseMessage.selectedButtonId || '';
+    } else if (msg.message.listResponseMessage) {
+      // List selection → use the row ID
+      text = msg.message.listResponseMessage.singleSelectReply?.selectedRowId || '';
+    } else {
+      text = msg.message.conversation
+        || msg.message.extendedTextMessage?.text
+        || '';
+    }
+
+    if (!text || text.trim().length < 1) return;
 
     // Strip ALL leading symbols (., /, !, #, *, etc.) so .items /items !items items all work
     const stripped = text.trim().replace(/^[^a-zA-Z0-9]+/, '');
@@ -1075,6 +1086,116 @@ async function startBot() {
           '📱 Admin: +' + ADMIN_NUMBER
         ].join('\n');
         await sock.sendMessage(chatId, { text: helpMsg });
+      }
+
+      // ─── ZAID Interactive Buttons ────────────────────────────────────────
+      if (cmd === 'zaid') {
+        const buttonMsg = {
+          text: '🤖 *' + BOT_NAME + '*\n\n👋 Welcome! Tap a button below to get started:',
+          footer: '🌐 ' + SITE_URL + ' • 📱 +' + ADMIN_NUMBER,
+          buttons: [
+            { buttonId: 'items', buttonText: { displayText: '📦 Items Excel' }, type: 1 },
+            { buttonId: 'items2', buttonText: { displayText: '📝 Items Text' }, type: 1 },
+            { buttonId: 'wallet', buttonText: { displayText: '💰 Wallet Excel' }, type: 1 },
+            { buttonId: 'wallet2', buttonText: { displayText: '💵 Wallet Text' }, type: 1 },
+            { buttonId: 'person', buttonText: { displayText: '👷 Person Excel' }, type: 1 }
+          ],
+          headerType: 1
+        };
+        await sock.sendMessage(chatId, buttonMsg);
+
+        // Send a second row of buttons
+        const buttonMsg2 = {
+          text: '⬇️ More options:',
+          footer: '🌐 ' + SITE_URL,
+          buttons: [
+            { buttonId: 'person2', buttonText: { displayText: '👷 Person Text' }, type: 1 },
+            { buttonId: 'maintenance', buttonText: { displayText: '🔧 Maint. Excel' }, type: 1 },
+            { buttonId: 'samples', buttonText: { displayText: '🧪 Samples Excel' }, type: 1 },
+            { buttonId: 'clipping', buttonText: { displayText: '✂️ Clipping Excel' }, type: 1 },
+            { buttonId: 'help', buttonText: { displayText: '❓ Help' }, type: 1 }
+          ],
+          headerType: 1
+        };
+        await sock.sendMessage(chatId, buttonMsg2);
+      }
+
+      // ─── TILLA Search ────────────────────────────────────────────────────
+      if (cmd === 'tilla') {
+        await sock.sendMessage(chatId, { text: '🔍 Searching for *TILLA* in items...' });
+        try {
+          const itemsData = await fetchStockData('items');
+          const tillaItems = itemsData.filter(e => {
+            const searchFields = [e.name, e.number, e.model, e.person].filter(Boolean).join(' ').toLowerCase();
+            return searchFields.includes('tilla');
+          });
+          if (!tillaItems.length) {
+            await sock.sendMessage(chatId, { text: '⚠️ No items found matching *TILLA*.' });
+            return;
+          }
+          const div = '──────────────────────────────';
+          const lines = tillaItems.map((e, i) => [
+            `${i+1}. 📋 *${e.name || 'N/A'}*`,
+            `   🔢 Serial: ${e.number || 'N/A'}`,
+            `   👤 Person: ${e.person || 'N/A'}`,
+            `   📐 Model: ${e.model || 'N/A'}`,
+            `   🔢 Qty: ${e.quantity || 1}`,
+            `   📊 Status: ${e.status || 'available'}`
+          ].join('\n')).join('\n' + div + '\n');
+
+          const msg = [
+            '🔍 ✦ *' + toBold('TILLA SEARCH') + '* ✦ 🔍',
+            LINE,
+            '📦 *Found:* ' + tillaItems.length + ' items',
+            DIV,
+            lines,
+            FOOTER
+          ].join('\n');
+          await sock.sendMessage(chatId, { text: msg });
+        } catch (err) {
+          await sock.sendMessage(chatId, { text: '❌ Error searching: ' + err.message });
+        }
+      }
+
+      // ─── Serial Number Search (3-4 digits) ──────────────────────────────
+      if (/^\d{3,4}$/.test(stripped)) {
+        const searchNum = stripped;
+        await sock.sendMessage(chatId, { text: '🔍 Searching item serial: *' + searchNum + '*...' });
+        try {
+          const itemsData = await fetchStockData('items');
+          // Search by serial number (exact or partial match)
+          const matched = itemsData.filter(e => {
+            const num = String(e.number || '').trim();
+            return num === searchNum || num.includes(searchNum) || num.endsWith(searchNum);
+          });
+          if (!matched.length) {
+            await sock.sendMessage(chatId, { text: '⚠️ *Thread not available!*\n\nNo item found with serial number *' + searchNum + '*.\n\nPlease check the number and try again.' });
+            return;
+          }
+          const div = '──────────────────────────────';
+          const lines = matched.map((e, i) => [
+            `${i+1}. 📋 *${e.name || 'N/A'}*`,
+            `   🔢 Serial: ${e.number || 'N/A'}`,
+            `   👤 Person: ${e.person || 'N/A'}`,
+            `   📐 Model: ${e.model || 'N/A'}`,
+            `   🔢 Qty: ${e.quantity || 1}`,
+            `   📊 Status: ${e.status || 'available'}`,
+            `   🕐 ${e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A'}`
+          ].join('\n')).join('\n' + div + '\n');
+
+          const msg = [
+            '🔍 ✦ *' + toBold('SERIAL SEARCH') + '* ✦ 🔍',
+            LINE,
+            '🔢 *Search:* ' + searchNum,
+            '📦 *Found:* ' + matched.length + ' item(s)',
+            DIV,
+            lines,
+            FOOTER
+          ].join('\n');
+          await sock.sendMessage(chatId, { text: msg });
+        } catch (err) {
+          await sock.sendMessage(chatId, { text: '❌ Error searching: ' + err.message });
+        }
       }
 
     } catch (err) {
