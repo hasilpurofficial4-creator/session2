@@ -26,7 +26,9 @@ const axios = require('axios');
 
 const PORT = parseInt(process.env.PORT) || 3001;
 const API_SECRET = process.env.API_SECRET || 'banu-saeed-secret-2024';
-const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923299931199';
+const ADMIN_NUMBERS_RAW = process.env.ADMIN_NUMBER || '923299931199';
+const ADMIN_NUMBERS = ADMIN_NUMBERS_RAW.split(',').map(n => n.trim()).filter(Boolean);
+const ADMIN_NUMBER = ADMIN_NUMBERS[0]; // Primary admin for display
 const BOT_NAME = 'UNIT STOCK MANAGEMENT';
 const SITE_URL = 'https://zaidbwp.vercel.app';
 const SESSION_DIR = path.join(__dirname, 'session');
@@ -244,7 +246,7 @@ async function addExcelFooter(ws) {
   footerRow1.font = { bold: true, size: 11, color: { argb: 'FF25D366' } };
   const footerRow2 = ws.addRow({ no: '', name: SITE_URL });
   footerRow2.font = { color: { argb: 'FF0066CC' }, underline: true };
-  const footerRow3 = ws.addRow({ no: '', name: 'Admin: +' + ADMIN_NUMBER });
+  const footerRow3 = ws.addRow({ no: '', name: 'Admin: +' + ADMIN_NUMBERS.join(', +') });
   footerRow3.font = { italic: true, color: { argb: 'FF666666' } };
 }
 
@@ -906,6 +908,105 @@ async function startBot() {
         await sock.sendMessage(chatId, { text: formatClippingText(data) });
       }
 
+      // .salary - Calculate salary for a person
+      if (cmd === 'salary') {
+        // Format: .salary,{name},{monthly_salary} or .salary {name} {monthly_salary}
+        const raw = stripped.substring(parts[0].length).trim();
+        let name = '', salaryStr = '';
+        if (raw.includes(',')) {
+          const salaryParts = raw.split(',').map(s => s.trim());
+          name = salaryParts[0] || '';
+          salaryStr = salaryParts[1] || '';
+        } else {
+          const salaryParts = raw.split(/\s+/);
+          name = salaryParts[0] || '';
+          salaryStr = salaryParts[1] || '';
+        }
+        if (!name || !salaryStr) {
+          await sock.sendMessage(chatId, { text: '💰 *Salary Calculator*\n\nUsage: `salary,{name},{monthly_salary}`\nExample: `salary,ADNAN,25000`\n\nOr: `salary ADNAN 25000`' });
+          return;
+        }
+        const monthlySalary = parseFloat(salaryStr);
+        if (isNaN(monthlySalary) || monthlySalary <= 0) {
+          await sock.sendMessage(chatId, { text: '❌ Invalid salary amount. Example: `salary,ADNAN,25000`' });
+          return;
+        }
+        await sock.sendMessage(chatId, { text: '💰 Calculating salary for *' + name.toUpperCase() + '*...' });
+
+        try {
+          const personData = await fetchStockData('person');
+          if (!personData.length) {
+            await sock.sendMessage(chatId, { text: '❌ No attendance data found.' });
+            return;
+          }
+          // Find person case-insensitive
+          const personName = personData.find(e => (e.personName || '').toUpperCase() === name.toUpperCase());
+          if (!personName) {
+            await sock.sendMessage(chatId, { text: '❌ Person "' + name + '" not found in attendance records.' });
+            return;
+          }
+          const actualName = personName.personName;
+
+          // Determine pay period: 6th of month to 5th of next month
+          const today = new Date();
+          const currentDay = today.getDate();
+          let periodStart, periodEnd, dividerMonth;
+          if (currentDay <= 5) {
+            // We're in the early part of the month, use PREVIOUS month as divider base
+            periodStart = new Date(today.getFullYear(), today.getMonth() - 1, 6);
+            periodEnd = new Date(today.getFullYear(), today.getMonth(), 5, 23, 59, 59, 999);
+            dividerMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+          } else {
+            // We're past the 5th, use CURRENT month as divider base
+            periodStart = new Date(today.getFullYear(), today.getMonth(), 6);
+            periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 5, 23, 59, 59, 999);
+            dividerMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+          }
+          const daysInMonth = new Date(dividerMonth.getFullYear(), dividerMonth.getMonth() + 1, 0).getDate();
+          const monthName = dividerMonth.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+          // Count days worked in the period
+          const personEntries = personData
+            .filter(e => e.personName === actualName && e.action === 'enter')
+            .map(e => ({ ...e, _date: new Date(e.timestamp) }))
+            .filter(e => e._date >= periodStart && e._date <= periodEnd);
+
+          // Count unique work dates
+          const workDates = new Set();
+          personEntries.forEach(e => {
+            workDates.add(e._date.toDateString());
+          });
+          const daysWorked = workDates.size;
+
+          // Calculate salary
+          const dailyRate = monthlySalary / daysInMonth;
+          const earnedSalary = Math.round(dailyRate * daysWorked);
+          const periodStartStr = periodStart.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+          const periodEndStr = periodEnd.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+          const msg = [
+            '💰 ✦ *' + toBold('SALARY CALCULATOR') + '* ✦ 💰',
+            LINE,
+            '👤 *Name:* ' + actualName,
+            '💵 *Monthly Salary:* Rs. ' + monthlySalary.toLocaleString(),
+            '📅 *Period:* ' + periodStartStr + ' — ' + periodEndStr,
+            '📆 *Month:* ' + monthName + ' (' + daysInMonth + ' days)',
+            DIV,
+            '📊 *' + toBold('CALCULATION') + '*',
+            THIN,
+            '📅 *Days Worked:* ' + daysWorked,
+            '💰 *Daily Rate:* Rs. ' + Math.round(dailyRate).toLocaleString() + ' (' + monthlySalary.toLocaleString() + ' ÷ ' + daysInMonth + ')',
+            THIN,
+            '✅ *Total Salary:* Rs. ' + earnedSalary.toLocaleString(),
+            '📝 *Formula:* ' + daysWorked + ' × ' + Math.round(dailyRate).toLocaleString() + ' = ' + earnedSalary.toLocaleString(),
+            FOOTER
+          ].join('\n');
+          await sock.sendMessage(chatId, { text: msg });
+        } catch (err) {
+          await sock.sendMessage(chatId, { text: '❌ Error calculating salary: ' + err.message });
+        }
+      }
+
       // .stock / .help - show all commands
       if (cmd === 'stock' || cmd === 'help') {
         const helpMsg = [
@@ -947,6 +1048,11 @@ async function startBot() {
           '🏓 *ping* — Check latency',
           '📊 *status* — Bot status & stats',
           '📨 *sendoutbox* — Process message queue',
+          '',
+          '💰 *' + toBold('SALARY CALCULATOR') + '*',
+          THIN,
+          '💰 *salary,{name},{amount}* — Calculate salary',
+          '_Example: salary,ADNAN,25000_',
           '',
           '💡 _Send any command with or without symbols_',
           '_Example: .items /items items !items all work_',
@@ -1000,24 +1106,29 @@ app.get('/status', (req, res) => {
 app.post('/send', authMiddleware, (req, res) => {
   const { message, to } = req.body;
   if (!message) return res.status(400).json({ error: 'message required' });
-  const target = to || ADMIN_NUMBER;
-  const entry = {
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-    to: target,
-    message,
-    queuedAt: new Date().toISOString(),
-    sent: false
-  };
+  // Support multiple targets: if 'to' is given, use it; otherwise send to ALL admins
+  const targets = to ? [to] : ADMIN_NUMBERS;
   const outbox = readOutbox();
-  outbox.push(entry);
+  const ids = [];
+  targets.forEach(target => {
+    const entry = {
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      to: target,
+      message,
+      queuedAt: new Date().toISOString(),
+      sent: false
+    };
+    outbox.push(entry);
+    ids.push(entry.id);
+    log('[API] Queued message for +' + target);
+    if (whatsappConnected && sockRef) {
+      processImmediateSend(sockRef, entry).catch(err => {
+        log('[API] Immediate send failed for +' + target + ': ' + err.message);
+      });
+    }
+  });
   writeOutbox(outbox);
-  log('[API] Queued message for +' + target);
-  if (whatsappConnected && sockRef) {
-    processImmediateSend(sockRef, entry).catch(err => {
-      log('[API] Immediate send failed: ' + err.message);
-    });
-  }
-  res.json({ success: true, message: 'Message queued for +' + target, id: entry.id });
+  res.json({ success: true, message: 'Message queued for ' + targets.map(t => '+' + t).join(', '), ids });
 });
 
 const PORT_START = PORT;
