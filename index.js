@@ -106,6 +106,7 @@ const DIV  = '╠═════════════════════
 const END  = '╚══════════════════════════════════╝';
 const THIN = '──────────────────────────────────';
 const FOOTER = '\n' + END + '\n🏢 *' + BOT_NAME + '*\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
+const CAPTION_FOOTER = '\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
 
 // Unicode Mathematical Bold converter for cool headers
 function toBold(str) {
@@ -877,7 +878,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'items.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '📦 *ITEMS* (' + data.length + ' entries)\n📅 ' + new Date().toLocaleDateString('en-GB') + '\n🏢 ' + BOT_NAME
+          caption: '📦 *ITEMS* (' + data.length + ' entries)\n📅 ' + new Date().toLocaleDateString('en-GB') + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -909,7 +910,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'wallet.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '💰 *WALLET*\n📥 Received: Rs. ' + totalIn.toLocaleString() + '\n📤 Spent: Rs. ' + totalOut.toLocaleString() + '\n🏦 Balance: Rs. ' + balance.toLocaleString() + '\n🏢 ' + BOT_NAME
+          caption: '💰 *WALLET*\n📥 Received: Rs. ' + totalIn.toLocaleString() + '\n📤 Spent: Rs. ' + totalOut.toLocaleString() + '\n🏦 Balance: Rs. ' + balance.toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -937,7 +938,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'person.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '👷 *PERSON ATTENDANCE* (' + data.length + ' entries)\n🏢 ' + BOT_NAME
+          caption: '👷 *PERSON ATTENDANCE* (' + data.length + ' entries)\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -967,7 +968,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'maintenance.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🔧 *MAINTENANCE* (' + data.length + ' issues | 🔴 ' + open + ' open | ✅ ' + (data.length - open) + ' solved)\n🏢 ' + BOT_NAME
+          caption: '🔧 *MAINTENANCE* (' + data.length + ' issues | 🔴 ' + open + ' open | ✅ ' + (data.length - open) + ' solved)\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -996,7 +997,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'samples.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🧪 *SAMPLES* (' + data.length + ' entries)\n🏢 ' + BOT_NAME
+          caption: '🧪 *SAMPLES* (' + data.length + ' entries)\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -1029,7 +1030,7 @@ async function startBot() {
           document: fs.readFileSync(tmpFile),
           fileName: 'clipping.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '✂️ *CLIPPING* (' + data.length + ' entries | ' + totalSize + ' yards | 💰 Rs. ' + totalPayment.toLocaleString() + ')\n🏢 ' + BOT_NAME
+          caption: '✂️ *CLIPPING* (' + data.length + ' entries | ' + totalSize + ' yards | 💰 Rs. ' + totalPayment.toLocaleString() + ')\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -1339,7 +1340,7 @@ async function startBot() {
         await sock.sendMessage(chatId, {
           document: fs.readFileSync(tmpFile), fileName: 'bills_' + date + '.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🧾 *BILLS — ' + date + '*\n📦 ' + dateBills.length + ' bills\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME
+          caption: '🧾 *BILLS — ' + date + '*\n📦 ' + dateBills.length + ' bills\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
@@ -1355,7 +1356,7 @@ async function startBot() {
           const imgBuf = await generateBillImage(dateBills, date);
           await sock.sendMessage(chatId, {
             image: imgBuf,
-            caption: '🧾 *BILLS — ' + date + '*\n💰 Rs. ' + dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0).toLocaleString() + '\n🏢 ' + BOT_NAME
+            caption: '🧾 *BILLS — ' + date + '*\n💰 Rs. ' + dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0).toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
           });
         } catch (imgErr) {
           log('[BILL-IMG] Error: ' + imgErr.message);
@@ -1375,7 +1376,7 @@ async function startBot() {
         await sock.sendMessage(chatId, {
           document: fs.readFileSync(tmpFile), fileName: 'bills.xlsx',
           mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🧾 *BILLS* (' + billsData.length + ' | 💰 Rs. ' + total.toLocaleString() + ')\n🏢 ' + BOT_NAME
+          caption: '🧾 *BILLS* (' + billsData.length + ' | 💰 Rs. ' + total.toLocaleString() + ')\n🏢 ' + BOT_NAME + CAPTION_FOOTER
         });
         fs.unlinkSync(tmpFile);
       }
