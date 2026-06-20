@@ -91,13 +91,21 @@ async function processImmediateSend(sock, entry) {
 
 // ─── Text Formatters ─────────────────────────────────────────────────────
 
-const LINE = '══════════════════════════════';
-const DIV  = '──────────────────────────────';
-const FOOTER = '\n' + LINE + '\n🏢 *' + BOT_NAME + '*\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
+const LINE = '╔══════════════════════════════════╗';
+const DIV  = '╠══════════════════════════════════╣';
+const END  = '╚══════════════════════════════════╝';
+const THIN = '──────────────────────────────────';
+const FOOTER = '\n' + END + '\n🏢 *' + BOT_NAME + '*\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
+
+// Unicode Mathematical Bold converter for cool headers
+function toBold(str) {
+  const map = { 'A':'\ud835\udc00','B':'\ud835\udc01','C':'\ud835\udc02','D':'\ud835\udc03','E':'\ud835\udc04','F':'\ud835\udc05','G':'\ud835\udc06','H':'\ud835\udc07','I':'\ud835\udc08','J':'\ud835\udc09','K':'\ud835\udc0a','L':'\ud835\udc0b','M':'\ud835\udc0c','N':'\ud835\udc0d','O':'\ud835\udc0e','P':'\ud835\udc0f','Q':'\ud835\udc10','R':'\ud835\udc11','S':'\ud835\udc12','T':'\ud835\udc13','U':'\ud835\udc14','V':'\ud835\udc15','W':'\ud835\udc16','X':'\ud835\udc17','Y':'\ud835\udc18','Z':'\ud835\udc19','a':'\ud835\udc1a','b':'\ud835\udc1b','c':'\ud835\udc1c','d':'\ud835\udc1d','e':'\ud835\udc1e','f':'\ud835\udc1f','g':'\ud835\udc20','h':'\ud835\udc21','i':'\ud835\udc22','j':'\ud835\udc23','k':'\ud835\udc24','l':'\ud835\udc25','m':'\ud835\udc26','n':'\ud835\udc27','o':'\ud835\udc28','p':'\ud835\udc29','q':'\ud835\udc2a','r':'\ud835\udc2b','s':'\ud835\udc2c','t':'\ud835\udc2d','u':'\ud835\udc2e','v':'\ud835\udc2f','w':'\ud835\udc30','x':'\ud835\udc31','y':'\ud835\udc32','z':'\ud835\udc33','0':'\ud835\udfce','1':'\ud835\udfcf','2':'\ud835\udfd0','3':'\ud835\udfd1','4':'\ud835\udfd2','5':'\ud835\udfd3','6':'\ud835\udfd4','7':'\ud835\udfd5','8':'\ud835\udfd6','9':'\ud835\udfd7' };
+  return str.split('').map(c => map[c] || c).join('');
+}
 
 function formatItemsText(data) {
-  let msg = '📦 ✦ *𝗜𝗧𝗘𝗠𝗦 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 📦\n' + LINE + '\n';
-  msg += '📊 *Total Items:* ' + data.length + '\n' + LINE + '\n\n';
+  let msg = '📦 ✦ *' + toBold('ITEMS REPORT') + '* ✦ 📦\n' + LINE + '\n';
+  msg += '📊 *' + toBold('Total Items') + ':* ' + data.length + '\n' + DIV + '\n\n';
   data.forEach((e, i) => {
     const statusIcon = e.status === 'available' ? '🟢' : e.status === 'in-use' ? '🔵' : '🔴';
     msg += (i+1) + '. 📦 *' + (e.name || 'N/A') + '*\n';
@@ -106,7 +114,7 @@ function formatItemsText(data) {
     msg += '   📐 Model: ' + (e.model || 'N/A') + '\n';
     msg += '   📦 Qty: ' + (e.quantity || 1) + '\n';
     msg += '   ' + statusIcon + ' Status: ' + (e.status || 'available') + '\n';
-    if (i < data.length - 1) msg += DIV + '\n';
+    if (i < data.length - 1) msg += THIN + '\n';
   });
   return msg + FOOTER;
 }
@@ -116,76 +124,105 @@ function formatWalletText(data) {
   const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
   const balance = totalIn - totalOut;
   const balEmoji = balance >= 0 ? '✅' : '⚠️';
-  let msg = '💰 ✦ *𝗪𝗔𝗟𝗟𝗘𝗧 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 💰\n' + LINE + '\n';
-  msg += '📥 *Total Received:* Rs. ' + totalIn.toLocaleString() + '\n';
-  msg += '📤 *Total Spent:* Rs. ' + totalOut.toLocaleString() + '\n';
-  msg += '🏦 *Balance:* ' + balEmoji + ' Rs. ' + balance.toLocaleString() + '\n';
-  msg += '📊 *Entries:* ' + data.length + '\n' + LINE + '\n\n';
-  data.forEach((e, i) => {
-    const icon = e.type === 'in' ? '📥' : '📤';
-    const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
-    msg += icon + ' *' + (e.type || '').toUpperCase() + '* — Rs. ' + (Number(e.amount)||0).toLocaleString() + '\n';
-    msg += '  👤 ' + (e.personOrPurpose || 'N/A') + '\n  📅 ' + date + '\n';
-    if (i < data.length - 1) msg += DIV + '\n';
-  });
+  let msg = '💰 ✦ *' + toBold('WALLET REPORT') + '* ✦ 💰\n' + LINE + '\n';
+  msg += '📥 *' + toBold('Total Received') + ':* Rs. ' + totalIn.toLocaleString() + '\n';
+  msg += '📤 *' + toBold('Total Spent') + ':* Rs. ' + totalOut.toLocaleString() + '\n';
+  msg += '🏦 *' + toBold('Balance') + ':* ' + balEmoji + ' Rs. ' + balance.toLocaleString() + '\n';
+  msg += '📊 *Entries:* ' + data.length + '\n' + DIV + '\n\n';
+  // Show IN entries first (green), then OUT entries (red)
+  const inEntries = data.filter(e => e.type === 'in');
+  const outEntries = data.filter(e => e.type !== 'in');
+  if (inEntries.length) {
+    msg += '📥 *' + toBold('MONEY IN') + '* 📥\n' + THIN + '\n';
+    inEntries.forEach((e, i) => {
+      const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
+      msg += '🟢 Rs. ' + (Number(e.amount)||0).toLocaleString() + ' — ' + (e.personOrPurpose || 'N/A') + '\n   📅 ' + date + '\n';
+      if (i < inEntries.length - 1) msg += THIN + '\n';
+    });
+  }
+  if (outEntries.length) {
+    msg += '\n📤 *' + toBold('MONEY OUT') + '* 📤\n' + THIN + '\n';
+    outEntries.forEach((e, i) => {
+      const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
+      msg += '🔴 Rs. ' + (Number(e.amount)||0).toLocaleString() + ' — ' + (e.personOrPurpose || 'N/A') + '\n   📅 ' + date + '\n';
+      if (i < outEntries.length - 1) msg += THIN + '\n';
+    });
+  }
   return msg + FOOTER;
 }
 
 function formatPersonText(data) {
-  let msg = '👷 ✦ *𝗣𝗘𝗥𝗦𝗢𝗡 𝗔𝗧𝗧𝗘𝗡𝗗𝗔𝗡𝗖𝗘* ✦ 👷\n' + LINE + '\n';
-  msg += '📊 *Total Entries:* ' + data.length + '\n' + LINE + '\n\n';
+  let msg = '👷 ✦ *' + toBold('PERSON ATTENDANCE') + '* ✦ 👷\n' + LINE + '\n';
+  msg += '📊 *' + toBold('Total Entries') + ':* ' + data.length + '\n' + DIV + '\n\n';
   data.forEach((e, i) => {
     const icon = e.action === 'enter' ? '🟢' : '🔴';
     const date = e.timestamp ? new Date(e.timestamp).toLocaleString('en-GB') : '';
     msg += (i+1) + '. 👤 *' + (e.personName || 'N/A') + '*\n';
     msg += '   ' + icon + ' ' + (e.action === 'enter' ? 'Checked In' : 'Checked Out') + '\n';
     msg += '   📅 ' + date + '\n';
-    if (i < data.length - 1) msg += DIV + '\n';
+    if (i < data.length - 1) msg += THIN + '\n';
   });
   return msg + FOOTER;
 }
 
 function formatMaintenanceText(data) {
   const open = data.filter(e => e.status !== 'solved').length;
-  let msg = '🔧 ✦ *𝗠𝗔𝗜𝗡𝗧𝗘𝗡𝗔𝗡𝗖𝗘 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 🔧\n' + LINE + '\n';
-  msg += '📊 *Total:* ' + data.length + ' | 🔴 *Open:* ' + open + ' | ✅ *Solved:* ' + (data.length - open) + '\n' + LINE + '\n\n';
+  let msg = '🔧 ✦ *' + toBold('MAINTENANCE REPORT') + '* ✦ 🔧\n' + LINE + '\n';
+  msg += '📊 *Total:* ' + data.length + ' | 🔴 *Open:* ' + open + ' | ✅ *Solved:* ' + (data.length - open) + '\n' + DIV + '\n\n';
   data.forEach((e, i) => {
     const statusIcon = e.status === 'solved' ? '✅' : '🔴';
     msg += (i+1) + '. ' + statusIcon + ' *' + (e.category || 'Issue') + '*\n';
     msg += '   📝 ' + (e.subject || 'N/A') + '\n';
     msg += '   📄 ' + (e.description || 'N/A') + '\n';
-    if (i < data.length - 1) msg += DIV + '\n';
+    if (i < data.length - 1) msg += THIN + '\n';
   });
   return msg + FOOTER;
 }
 
 function formatSamplesText(data) {
-  let msg = '🧪 ✦ *𝗦𝗔𝗠𝗣𝗟𝗘𝗦 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 🧪\n' + LINE + '\n';
-  msg += '📊 *Total:* ' + data.length + '\n' + LINE + '\n\n';
-  data.forEach((e, i) => {
-    const icon = e.type === 'in' ? '📥' : '📤';
-    msg += (i+1) + '. ' + icon + ' *' + (e.type === 'in' ? 'Sample In' : 'Sample Out') + '*\n';
-    msg += '   👤 ' + (e.personName || 'N/A') + '\n';
-    msg += '   📋 ' + (e.program || 'N/A') + '\n';
-    msg += '   🔢 ' + (e.pieces || 'N/A') + ' pieces\n';
-    if (i < data.length - 1) msg += DIV + '\n';
-  });
+  let msg = '🧪 ✦ *' + toBold('SAMPLES REPORT') + '* ✦ 🧪\n' + LINE + '\n';
+  msg += '📊 *Total:* ' + data.length + '\n' + DIV + '\n\n';
+  const inEntries = data.filter(e => e.type === 'in');
+  const outEntries = data.filter(e => e.type !== 'in');
+  if (inEntries.length) {
+    msg += '📥 *' + toBold('SAMPLE IN') + '* 📥\n' + THIN + '\n';
+    inEntries.forEach((e, i) => {
+      msg += '🟢 ' + (e.personName || 'N/A') + ' | ' + (e.program || 'N/A') + ' | ' + (e.pieces || 'N/A') + ' pcs\n';
+      if (i < inEntries.length - 1) msg += THIN + '\n';
+    });
+  }
+  if (outEntries.length) {
+    msg += '\n📤 *' + toBold('SAMPLE OUT') + '* 📤\n' + THIN + '\n';
+    outEntries.forEach((e, i) => {
+      msg += '🔴 ' + (e.personName || 'N/A') + ' | ' + (e.program || 'N/A') + ' | ' + (e.pieces || 'N/A') + ' pcs\n';
+      if (i < outEntries.length - 1) msg += THIN + '\n';
+    });
+  }
   return msg + FOOTER;
 }
 
 function formatClippingText(data) {
   const inEntries = data.filter(e => e.type === 'in');
+  const outEntries = data.filter(e => e.type !== 'in');
   let totalSize = 0;
   inEntries.forEach(e => { const n = parseFloat(e.size); if (!isNaN(n)) totalSize += n; });
-  let msg = '✂️ ✦ *𝗖𝗟𝗜𝗣𝗣𝗜𝗡𝗚 𝗥𝗘𝗣𝗢𝗥𝗧* ✂️\n' + LINE + '\n';
-  msg += '📊 *Total:* ' + data.length + ' | 📏 *Total Size:* ' + totalSize + ' yards\n' + LINE + '\n\n';
-  data.forEach((e, i) => {
-    const icon = e.type === 'in' ? '📥' : e.type === 'transfer' ? '💸' : '📤';
-    msg += (i+1) + '. ' + icon + ' *' + (e.clipperName || 'N/A') + '*\n';
-    msg += '   📏 ' + (e.size || 'N/A') + ' yards\n';
-    msg += '   🏷️ ' + (e.type || 'N/A') + '\n';
-    if (i < data.length - 1) msg += DIV + '\n';
-  });
+  let msg = '✂️ ✦ *' + toBold('CLIPPING REPORT') + '* ✂️\n' + LINE + '\n';
+  msg += '📊 *Total:* ' + data.length + ' | 📏 *Total Size:* ' + totalSize + ' yards\n' + DIV + '\n\n';
+  if (inEntries.length) {
+    msg += '📥 *' + toBold('CLIPPED IN') + '* 📥\n' + THIN + '\n';
+    inEntries.forEach((e, i) => {
+      msg += '🟢 ' + (e.clipperName || 'N/A') + ' | ' + (e.size || 'N/A') + ' yds\n';
+      if (i < inEntries.length - 1) msg += THIN + '\n';
+    });
+  }
+  if (outEntries.length) {
+    msg += '\n📤 *' + toBold('CLIPPING OUT') + '* 📤\n' + THIN + '\n';
+    outEntries.forEach((e, i) => {
+      const icon = e.type === 'transfer' ? '💸' : '🔴';
+      msg += icon + ' ' + (e.clipperName || 'N/A') + ' | ' + (e.size || 'N/A') + ' yds | ' + (e.type || 'N/A') + '\n';
+      if (i < outEntries.length - 1) msg += THIN + '\n';
+    });
+  }
   return msg + FOOTER;
 }
 
@@ -246,38 +283,71 @@ async function generateItemsXlsx(data) {
 async function generateWalletXlsx(data) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Wallet');
+
+  const inEntries = data.filter(e => e.type === 'in');
+  const outEntries = data.filter(e => e.type !== 'in');
+  const totalIn = inEntries.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const totalOut = outEntries.reduce((a, e) => a + Number(e.amount || 0), 0);
+  const balance = totalIn - totalOut;
+  const maxRows = Math.max(inEntries.length, outEntries.length);
+
+  // ── Side-by-side: LEFT = IN (green), RIGHT = OUT (red) ──
   ws.columns = [
-    { header: '#', key: 'no', width: 5 },
-    { header: 'Type', key: 'type', width: 10 },
-    { header: 'From / For', key: 'personOrPurpose', width: 25 },
-    { header: 'Amount (Rs)', key: 'amount', width: 15 },
-    { header: 'Date', key: 'timestamp', width: 20 },
+    { header: '#', key: 'in_no', width: 4 },
+    { header: '📥 RECEIVED FROM', key: 'in_from', width: 28 },
+    { header: 'AMOUNT (Rs)', key: 'in_amount', width: 15 },
+    { header: 'DATE', key: 'in_date', width: 14 },
+    { header: '', key: 'gap', width: 3 },
+    { header: '#', key: 'out_no', width: 4 },
+    { header: '📤 SPENT ON', key: 'out_for', width: 28 },
+    { header: 'AMOUNT (Rs)', key: 'out_amount', width: 15 },
+    { header: 'DATE', key: 'out_date', width: 14 },
   ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
-  let balance = 0;
-  data.forEach((e, i) => {
-    const amt = Number(e.amount) || 0;
-    if (e.type === 'in') balance += amt;
-    else balance -= amt;
-    ws.addRow({
-      no: i + 1,
-      type: (e.type || '').toUpperCase(),
-      personOrPurpose: e.personOrPurpose || '',
-      amount: amt,
-      timestamp: e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : ''
-    });
-  });
-  // Summary row
-  const totalIn = data.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
-  const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
+
+  // Header styling - GREEN for IN side, RED for OUT side
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  [1,2,3,4].forEach(c => { headerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00AA00' } }; });
+  [6,7,8,9].forEach(c => { headerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCC0000' } }; });
+  headerRow.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+
+  // Data rows
+  for (let i = 0; i < maxRows; i++) {
+    const rowData = { gap: '' };
+    if (i < inEntries.length) {
+      const e = inEntries[i];
+      rowData.in_no = i + 1;
+      rowData.in_from = e.personOrPurpose || '';
+      rowData.in_amount = Number(e.amount) || 0;
+      rowData.in_date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
+    }
+    if (i < outEntries.length) {
+      const e = outEntries[i];
+      rowData.out_no = i + 1;
+      rowData.out_for = e.personOrPurpose || '';
+      rowData.out_amount = Number(e.amount) || 0;
+      rowData.out_date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
+    }
+    const row = ws.addRow(rowData);
+    // Light green tint for IN side, light red tint for OUT side
+    if (i < inEntries.length) {
+      [1,2,3,4].forEach(c => { row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } }; });
+    }
+    if (i < outEntries.length) {
+      [6,7,8,9].forEach(c => { row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4EC' } }; });
+    }
+  }
+
+  // Summary rows
   ws.addRow({});
-  const sumRow1 = ws.addRow({ type: '', personOrPurpose: 'TOTAL RECEIVED', amount: totalIn });
-  sumRow1.font = { bold: true, color: { argb: 'FF00AA00' } };
-  const sumRow2 = ws.addRow({ type: '', personOrPurpose: 'TOTAL SPENT', amount: totalOut });
-  sumRow2.font = { bold: true, color: { argb: 'FFCC0000' } };
-  const sumRow3 = ws.addRow({ type: '', personOrPurpose: 'BALANCE', amount: balance });
-  sumRow3.font = { bold: true, size: 14 };
+  const sumIn = ws.addRow({ in_from: 'TOTAL RECEIVED', in_amount: totalIn });
+  sumIn.font = { bold: true, color: { argb: 'FF00AA00' }, size: 12 };
+  const sumOut = ws.addRow({ out_for: 'TOTAL SPENT', out_amount: totalOut });
+  sumOut.font = { bold: true, color: { argb: 'FFCC0000' }, size: 12 };
+  ws.addRow({});
+  const balRow = ws.addRow({ in_from: 'BALANCE', in_amount: balance });
+  balRow.font = { bold: true, size: 14 };
+
   await addExcelFooter(ws);
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
@@ -309,21 +379,63 @@ async function generatePersonXlsx(data) {
 
 async function generateGenericXlsx(section, data) {
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet(section.charAt(0).toUpperCase() + section.slice(1));
+  const sheetName = section.charAt(0).toUpperCase() + section.slice(1);
+  const ws = wb.addWorksheet(sheetName);
   if (!data.length) return null;
-  // Get all keys from first entry
-  const keys = Object.keys(data[0]).filter(k => k !== 'id');
-  ws.columns = [
-    { header: '#', key: 'no', width: 5 },
-    ...keys.map(k => ({ header: k.charAt(0).toUpperCase() + k.slice(1), key: k, width: 20 }))
-  ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
-  data.forEach((e, i) => {
-    const row = { no: i + 1 };
-    keys.forEach(k => { row[k] = e[k] != null ? String(e[k]) : ''; });
-    ws.addRow(row);
-  });
+
+  // Separate IN and OUT for samples/clipping
+  const hasInOut = ['samples', 'clipping'].includes(section);
+  const inEntries = hasInOut ? data.filter(e => e.type === 'in') : [];
+  const outEntries = hasInOut ? data.filter(e => e.type !== 'in') : [];
+
+  if (hasInOut && inEntries.length && outEntries.length) {
+    // ── Side-by-side layout ──
+    const keys = Object.keys(data[0]).filter(k => k !== 'id');
+    const halfCols = keys.map(k => ({ header: k.charAt(0).toUpperCase() + k.slice(1), key: k, width: 18 }));
+    ws.columns = [
+      { header: '#', key: 'in_no', width: 4 },
+      ...halfCols.map(c => ({ ...c, key: 'in_' + c.key })),
+      { header: '', key: 'gap', width: 3 },
+      { header: '#', key: 'out_no', width: 4 },
+      ...halfCols.map(c => ({ ...c, key: 'out_' + c.key })),
+    ];
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    const inColCount = halfCols.length + 1;
+    for (let c = 1; c <= inColCount; c++) headerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF00AA00' } };
+    for (let c = inColCount + 2; c <= ws.columnCount; c++) headerRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCC0000' } };
+    headerRow.getCell(inColCount + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+
+    const maxRows = Math.max(inEntries.length, outEntries.length);
+    for (let i = 0; i < maxRows; i++) {
+      const rowData = { gap: '' };
+      if (i < inEntries.length) {
+        rowData.in_no = i + 1;
+        keys.forEach(k => { rowData['in_' + k] = inEntries[i][k] != null ? String(inEntries[i][k]) : ''; });
+      }
+      if (i < outEntries.length) {
+        rowData.out_no = i + 1;
+        keys.forEach(k => { rowData['out_' + k] = outEntries[i][k] != null ? String(outEntries[i][k]) : ''; });
+      }
+      const row = ws.addRow(rowData);
+      if (i < inEntries.length) for (let c = 1; c <= inColCount; c++) row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+      if (i < outEntries.length) for (let c = inColCount + 2; c <= ws.columnCount; c++) row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCE4EC' } };
+    }
+  } else {
+    // Fallback: single table layout
+    const keys = Object.keys(data[0]).filter(k => k !== 'id');
+    ws.columns = [
+      { header: '#', key: 'no', width: 5 },
+      ...keys.map(k => ({ header: k.charAt(0).toUpperCase() + k.slice(1), key: k, width: 20 }))
+    ];
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
+    data.forEach((e, i) => {
+      const row = { no: i + 1 };
+      keys.forEach(k => { row[k] = e[k] != null ? String(e[k]) : ''; });
+      ws.addRow(row);
+    });
+  }
   await addExcelFooter(ws);
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
@@ -561,14 +673,17 @@ async function startBot() {
       || msg.message.extendedTextMessage?.text
       || '';
 
-    if (!text.startsWith('.')) return;
+    if (!text || text.trim().length < 2) return;
 
-    const parts = text.trim().split(/\s+/);
+    // Strip ALL leading symbols (., /, !, #, *, etc.) so .items /items !items items all work
+    const stripped = text.trim().replace(/^[^a-zA-Z0-9]+/, '');
+    if (!stripped) return;
+    const parts = stripped.split(/\s+/);
     const cmd = parts[0].toLowerCase();
 
     try {
       // .ping
-      if (cmd === '.ping') {
+      if (cmd === 'ping') {
         const start = Date.now();
         await sock.sendMessage(chatId, { text: 'Pong!' });
         const latency = Date.now() - start;
@@ -578,7 +693,7 @@ async function startBot() {
       }
 
       // .sendoutbox
-      if (cmd === '.sendoutbox') {
+      if (cmd === 'sendoutbox') {
         const sub = (parts[1] || '').toLowerCase();
 
         if (sub === 'status') {
@@ -600,7 +715,7 @@ async function startBot() {
       }
 
       // .status
-      if (cmd === '.status') {
+      if (cmd === 'status') {
         const outbox = readOutbox();
         const pending = outbox.filter(m => !m.sent).length;
         await sock.sendMessage(chatId, {
@@ -611,7 +726,7 @@ async function startBot() {
       // ─── Stock Manager Commands ────────────────────────────────────────────
 
       // .items - send items.xlsx
-      if (cmd === '.items') {
+      if (cmd === 'items') {
         await sock.sendMessage(chatId, { text: '📦 Fetching items data...' });
         const data = await fetchStockData('items');
         if (!data.length) {
@@ -632,7 +747,7 @@ async function startBot() {
       }
 
       // .items2 - send items as formatted text
-      if (cmd === '.items2') {
+      if (cmd === 'items2') {
         await sock.sendMessage(chatId, { text: '📦 Fetching items text...' });
         const data = await fetchStockData('items');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No items data found.' }); return; }
@@ -640,7 +755,7 @@ async function startBot() {
       }
 
       // .wallet - send wallet.xlsx
-      if (cmd === '.wallet') {
+      if (cmd === 'wallet') {
         await sock.sendMessage(chatId, { text: '💰 Fetching wallet data...' });
         const data = await fetchStockData('wallet');
         if (!data.length) {
@@ -664,14 +779,14 @@ async function startBot() {
       }
 
       // .wallet2 / .wallettxt - send wallet as formatted text
-      if (cmd === '.wallet2' || cmd === '.wallettxt') {
+      if (cmd === 'wallet2' || cmd === 'wallettxt') {
         const data = await fetchStockData('wallet');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No wallet data found.' }); return; }
         await sock.sendMessage(chatId, { text: formatWalletText(data) });
       }
 
       // .person - send person.xlsx
-      if (cmd === '.person') {
+      if (cmd === 'person') {
         await sock.sendMessage(chatId, { text: '👷 Fetching person data...' });
         const data = await fetchStockData('person');
         if (!data.length) {
@@ -692,7 +807,7 @@ async function startBot() {
       }
 
       // .person2 - send person as formatted text
-      if (cmd === '.person2') {
+      if (cmd === 'person2') {
         await sock.sendMessage(chatId, { text: '👷 Fetching person text...' });
         const data = await fetchStockData('person');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No person data found.' }); return; }
@@ -700,7 +815,7 @@ async function startBot() {
       }
 
       // .maintenance - send maintenance.xlsx
-      if (cmd === '.maintenance') {
+      if (cmd === 'maintenance') {
         await sock.sendMessage(chatId, { text: '🔧 Fetching maintenance data...' });
         const data = await fetchStockData('maintenance');
         if (!data.length) {
@@ -722,7 +837,7 @@ async function startBot() {
       }
 
       // .maintenance2 - send maintenance as formatted text
-      if (cmd === '.maintenance2') {
+      if (cmd === 'maintenance2') {
         await sock.sendMessage(chatId, { text: '🔧 Fetching maintenance text...' });
         const data = await fetchStockData('maintenance');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No maintenance data found.' }); return; }
@@ -730,7 +845,7 @@ async function startBot() {
       }
 
       // .samples - send samples.xlsx
-      if (cmd === '.samples') {
+      if (cmd === 'samples') {
         await sock.sendMessage(chatId, { text: '🧪 Fetching samples data...' });
         const data = await fetchStockData('samples');
         if (!data.length) {
@@ -751,7 +866,7 @@ async function startBot() {
       }
 
       // .samples2 - send samples as formatted text
-      if (cmd === '.samples2') {
+      if (cmd === 'samples2') {
         await sock.sendMessage(chatId, { text: '🧪 Fetching samples text...' });
         const data = await fetchStockData('samples');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No samples data found.' }); return; }
@@ -759,7 +874,7 @@ async function startBot() {
       }
 
       // .clipping - send clipping.xlsx
-      if (cmd === '.clipping') {
+      if (cmd === 'clipping') {
         await sock.sendMessage(chatId, { text: '✂️ Fetching clipping data...' });
         const data = await fetchStockData('clipping');
         if (!data.length) {
@@ -784,7 +899,7 @@ async function startBot() {
       }
 
       // .clipping2 - send clipping as formatted text
-      if (cmd === '.clipping2') {
+      if (cmd === 'clipping2') {
         await sock.sendMessage(chatId, { text: '✂️ Fetching clipping text...' });
         const data = await fetchStockData('clipping');
         if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No clipping data found.' }); return; }
@@ -792,27 +907,52 @@ async function startBot() {
       }
 
       // .stock / .help - show all commands
-      if (cmd === '.stock' || cmd === '.help') {
+      if (cmd === 'stock' || cmd === 'help') {
         const helpMsg = [
-          '🤖 *' + BOT_NAME + '*',
+          '🤖 *' + toBold(BOT_NAME) + '*',
           LINE,
-          '📦 *.items* — Items Excel file',
-          '📝 *.items2* — Items text details',
-          '💰 *.wallet* — Wallet Excel file',
-          '📝 *.wallet2* — Wallet text details',
-          '👷 *.person* — Attendance Excel',
-          '📝 *.person2* — Attendance text',
-          '🔧 *.maintenance* — Maintenance Excel',
-          '📝 *.maintenance2* — Maintenance text',
-          '🧪 *.samples* — Samples Excel',
-          '📝 *.samples2* — Samples text',
-          '✂️ *.clipping* — Clipping Excel',
-          '📝 *.clipping2* — Clipping text',
-          DIV,
-          '📌 *.ping* — Check latency',
-          '📌 *.status* — Bot status',
-          '📌 *.sendoutbox* — Process queue',
+          '',
+          '📂 *' + toBold('STOCK & INVENTORY') + '*',
+          THIN,
+          '📦 *items* — Items Excel file',
+          '📝 *items2* — Items text details',
+          '',
+          '💰 *' + toBold('WALLET & FINANCE') + '*',
+          THIN,
+          '💵 *wallet* — Wallet Excel (IN/OUT side-by-side)',
+          '📝 *wallet2* — Wallet text details',
+          '',
+          '👷 *' + toBold('ATTENDANCE') + '*',
+          THIN,
+          '📋 *person* — Attendance Excel',
+          '📝 *person2* — Attendance text',
+          '',
+          '🔧 *' + toBold('MAINTENANCE') + '*',
+          THIN,
+          '🔧 *maintenance* — Maintenance Excel',
+          '📝 *maintenance2* — Maintenance text',
+          '',
+          '🧪 *' + toBold('SAMPLES') + '*',
+          THIN,
+          '🧪 *samples* — Samples Excel (IN/OUT)',
+          '📝 *samples2* — Samples text',
+          '',
+          '✂️ *' + toBold('CLIPPING') + '*',
+          THIN,
+          '✂️ *clipping* — Clipping Excel (IN/OUT)',
+          '📝 *clipping2* — Clipping text',
+          '',
+          '⚙️ *' + toBold('BOT CONTROLS') + '*',
+          THIN,
+          '🏓 *ping* — Check latency',
+          '📊 *status* — Bot status & stats',
+          '📨 *sendoutbox* — Process message queue',
+          '',
+          '💡 _Send any command with or without symbols_',
+          '_Example: .items /items items !items all work_',
+          '',
           LINE,
+          '🏢 *' + BOT_NAME + '*',
           '🌐 ' + SITE_URL,
           '📱 Admin: +' + ADMIN_NUMBER
         ].join('\n');
