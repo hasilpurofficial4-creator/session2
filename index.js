@@ -1,14 +1,13 @@
 /**
- * BANU SAEED HOSPITAL - Clean WhatsApp Bot
- * Replaces the broken obfuscated bot with a clean Baileys-based implementation.
- * 
+ * UNIT STOCK MANAGEMENT - WhatsApp Bot + API Server
+ * Runs on Railway as a standalone Express + Baileys bot service.
+ *
  * Features:
- * - Multi-file auth state (session/ folder)
- * - SESSION_ID restoration from env (base64 encoded)
- * - QR code pairing for new sessions
- * - .sendoutbox command to process message queue
- * - Auto-send queue every 30 seconds
- * - .ping / .status commands
+ *  - Express API: /send, /status, / (health)
+ *  - Auth middleware (API_SECRET)
+ *  - Outbox queue with auto-send every 30s
+ *  - .{category} → Excel file | .{category}2 → text details
+ *  - Rich emoji formatting on all messages
  */
 
 const {
@@ -24,22 +23,31 @@ const ExcelJS = require('exceljs');
 const axios = require('axios');
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT) || 3001;
 const API_SECRET = process.env.API_SECRET || 'banu-saeed-secret-2024';
-const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923299931199';
+const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923291001302';
 const SESSION_DIR = path.join(__dirname, 'session');
 const OUTBOX_PATH = path.join(__dirname, 'data', 'outbox.json');
 const GITHUB_RAW = 'https://raw.githubusercontent.com/hasilpurofficial4-creator/zaid2/main/data';
+const BOT_NAME = 'UNIT STOCK MANAGEMENT';
 
-// ─── State ──────────────────────────────────────────────────────────────────
-
+// ─── State Tracking ─────────────────────────────────────────────────────────
 let whatsappConnected = false;
+let botRunning = false;
 let sockRef = null;
+let sentCount = 0;
 let botLogs = [];
+const startTime = Date.now();
+
+function log(msg) {
+  const ts = new Date().toISOString().slice(11, 19);
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  botLogs.push(line);
+  if (botLogs.length > 50) botLogs = botLogs.slice(-50);
+}
 
 // ─── Outbox Helpers ──────────────────────────────────────────────────────────
-
 function readOutbox() {
   try {
     if (!fs.existsSync(OUTBOX_PATH)) return [];
@@ -53,20 +61,26 @@ function writeOutbox(data) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(OUTBOX_PATH, JSON.stringify(data, null, 2), 'utf8');
   } catch (err) {
-    console.error('[OUTBOX] Write error:', err.message);
+    log('[OUTBOX] Write error: ' + err.message);
   }
 }
 
-// ─── Stock Manager Helpers ───────────────────────────────────────────────────
-
+// ─── Stock Data Fetch ────────────────────────────────────────────────────────
 async function fetchStockData(section) {
   try {
     const res = await axios.get(`${GITHUB_RAW}/${section}.json`, { timeout: 10000 });
     return Array.isArray(res.data) ? res.data : [];
   } catch (err) {
-    console.error('[STOCK] Fetch ' + section + ' error:', err.message);
+    log('[STOCK] Fetch ' + section + ' error: ' + err.message);
     return [];
   }
+}
+
+// ─── Excel Generators ────────────────────────────────────────────────────────
+function styleHeader(ws) {
+  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B5E20' } };
+  ws.getRow(1).alignment = { horizontal: 'center' };
 }
 
 async function generateItemsXlsx(data) {
@@ -82,22 +96,15 @@ async function generateItemsXlsx(data) {
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Date', key: 'timestamp', width: 20 },
   ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
+  styleHeader(ws);
   data.forEach((e, i) => {
     ws.addRow({
-      no: i + 1,
-      name: e.name || '',
-      number: e.number || '',
-      model: e.model || '',
-      quantity: e.quantity || 1,
-      person: e.person || '',
-      status: e.status || 'available',
+      no: i + 1, name: e.name || '', number: e.number || '', model: e.model || '',
+      quantity: e.quantity || 1, person: e.person || '', status: e.status || 'available',
       timestamp: e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : ''
     });
   });
-  const buf = await wb.xlsx.writeBuffer();
-  return Buffer.from(buf);
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 async function generateWalletXlsx(data) {
@@ -110,33 +117,24 @@ async function generateWalletXlsx(data) {
     { header: 'Amount (Rs)', key: 'amount', width: 15 },
     { header: 'Date', key: 'timestamp', width: 20 },
   ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
+  styleHeader(ws);
   let balance = 0;
   data.forEach((e, i) => {
     const amt = Number(e.amount) || 0;
-    if (e.type === 'in') balance += amt;
-    else balance -= amt;
+    if (e.type === 'in') balance += amt; else balance -= amt;
     ws.addRow({
-      no: i + 1,
-      type: (e.type || '').toUpperCase(),
-      personOrPurpose: e.personOrPurpose || '',
-      amount: amt,
+      no: i + 1, type: (e.type || '').toUpperCase(),
+      personOrPurpose: e.personOrPurpose || '', amount: amt,
       timestamp: e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : ''
     });
   });
-  // Summary row
+  ws.addRow({});
   const totalIn = data.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
   const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-  ws.addRow({});
-  const sumRow1 = ws.addRow({ type: '', personOrPurpose: 'TOTAL RECEIVED', amount: totalIn });
-  sumRow1.font = { bold: true, color: { argb: 'FF00AA00' } };
-  const sumRow2 = ws.addRow({ type: '', personOrPurpose: 'TOTAL SPENT', amount: totalOut });
-  sumRow2.font = { bold: true, color: { argb: 'FFCC0000' } };
-  const sumRow3 = ws.addRow({ type: '', personOrPurpose: 'BALANCE', amount: balance });
-  sumRow3.font = { bold: true, size: 14 };
-  const buf = await wb.xlsx.writeBuffer();
-  return Buffer.from(buf);
+  const r1 = ws.addRow({ personOrPurpose: 'TOTAL RECEIVED', amount: totalIn }); r1.font = { bold: true, color: { argb: 'FF00AA00' } };
+  const r2 = ws.addRow({ personOrPurpose: 'TOTAL SPENT', amount: totalOut }); r2.font = { bold: true, color: { argb: 'FFCC0000' } };
+  const r3 = ws.addRow({ personOrPurpose: 'BALANCE', amount: balance }); r3.font = { bold: true, size: 14 };
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 async function generatePersonXlsx(data) {
@@ -148,668 +146,551 @@ async function generatePersonXlsx(data) {
     { header: 'Action', key: 'action', width: 10 },
     { header: 'Date & Time', key: 'timestamp', width: 22 },
   ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
+  styleHeader(ws);
   data.forEach((e, i) => {
     ws.addRow({
-      no: i + 1,
-      personName: e.personName || '',
-      action: e.action || '',
+      no: i + 1, personName: e.personName || '', action: e.action || '',
       timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString('en-GB') : ''
     });
   });
-  const buf = await wb.xlsx.writeBuffer();
-  return Buffer.from(buf);
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 async function generateGenericXlsx(section, data) {
+  if (!data.length) return null;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(section.charAt(0).toUpperCase() + section.slice(1));
-  if (!data.length) return null;
-  // Get all keys from first entry
   const keys = Object.keys(data[0]).filter(k => k !== 'id');
   ws.columns = [
     { header: '#', key: 'no', width: 5 },
     ...keys.map(k => ({ header: k.charAt(0).toUpperCase() + k.slice(1), key: k, width: 20 }))
   ];
-  ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF25D366' } };
+  styleHeader(ws);
   data.forEach((e, i) => {
     const row = { no: i + 1 };
     keys.forEach(k => { row[k] = e[k] != null ? String(e[k]) : ''; });
     ws.addRow(row);
   });
-  const buf = await wb.xlsx.writeBuffer();
-  return Buffer.from(buf);
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-// ─── Session Restore from SESSION_ID ─────────────────────────────────────────
+// ─── Text Detail Formatters (for .{category}2 commands) ──────────────────────
+function fmtDate(ts) { return ts ? new Date(ts).toLocaleDateString('en-GB') : 'N/A'; }
+function fmtDateTime(ts) { return ts ? new Date(ts).toLocaleString('en-GB') : 'N/A'; }
+const LINE = '╔══════════════════════════════╗';
+const DIV  = '╠══════════════════════════════╣';
+const END  = '╚══════════════════════════════╝';
+
+function formatItemsText(data) {
+  let m = `📦 ✦ *𝗜𝗧𝗘𝗠𝗦 𝗜𝗡𝗩𝗘𝗡𝗧𝗢𝗥𝗬* ✦ 📦\n${LINE}\n`;
+  m += `📊 *𝗧𝗼𝗧𝗮𝗹 𝗜𝗧𝗲𝗺𝘀:* ${data.length}\n${DIV}\n\n`;
+  data.forEach((e, i) => {
+    const st = e.status || 'available';
+    const stIcon = st === 'available' ? '🟢' : st === 'in-use' ? '🔵' : '🔴';
+    m += `${stIcon} *${i + 1}. ${e.name || 'Unnamed'}*\n`;
+    m += `   🔢 Serial: ${e.number || 'N/A'}\n`;
+    m += `   📐 Model: ${e.model || 'N/A'}\n`;
+    m += `   📦 Qty: ${e.quantity || 1}\n`;
+    m += `   👤 Person: ${e.person || 'N/A'}\n`;
+    m += `   📅 ${fmtDate(e.timestamp)}\n`;
+    if (i < data.length - 1) m += `   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+function formatWalletText(data) {
+  const totalIn = data.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
+  const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
+  const bal = totalIn - totalOut;
+  const balEmoji = bal >= 0 ? '✅' : '⚠️';
+  let m = `💰 ✦ *𝗪𝗔𝗟𝗟𝗘𝗧 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 💰\n${LINE}\n`;
+  m += `📥 *𝗧𝗼𝗧𝗮𝗹 𝗥𝗲𝗰𝗲𝗶𝘃𝗲𝗱:* Rs. ${totalIn.toLocaleString()}\n`;
+  m += `📤 *𝗧𝗼𝗧𝗮𝗹 𝗦𝗽𝗲𝗻𝘁:* Rs. ${totalOut.toLocaleString()}\n`;
+  m += `🏦 *𝗕𝗮𝗹𝗮𝗻𝗰𝗲:* ${balEmoji} Rs. ${bal.toLocaleString()}\n`;
+  m += `📊 *𝗘𝗻𝘁𝗿𝗶𝗲𝘀:* ${data.length}\n${DIV}\n\n`;
+  data.forEach((e, i) => {
+    const amt = Number(e.amount) || 0;
+    const icon = e.type === 'in' ? '📥' : '📤';
+    m += `${icon} *${(e.type || '').toUpperCase()}* — Rs. ${amt.toLocaleString()}\n`;
+    m += `  👤 ${e.personOrPurpose || 'N/A'}\n`;
+    m += `  📅 ${fmtDate(e.timestamp)}\n`;
+    if (i < data.length - 1) m += `  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+function formatPersonText(data) {
+  const workers = [...new Set(data.map(e => e.personName).filter(Boolean))].sort();
+  let m = `👷 ✦ *𝗣𝗘𝗥𝗦𝗢𝗡 𝗔𝗧𝗧𝗘𝗡𝗗𝗔𝗡𝗖𝗘* ✦ 👷\n${LINE}\n`;
+  m += `👥 *𝗪𝗼𝗿𝗸𝗲𝗿𝘀:* ${workers.length}\n`;
+  m += `📋 *𝗧𝗼𝗧𝗮𝗹 𝗘𝗻𝘁𝗿𝗶𝗲𝘀:* ${data.length}\n${DIV}\n\n`;
+  const sorted = [...data].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  sorted.forEach((e, i) => {
+    const icon = e.action === 'enter' ? '🟢' : '🔴';
+    const act = e.action === 'enter' ? 'CHECKED IN' : 'CHECKED OUT';
+    m += `${icon} *${e.personName || 'Unknown'}* — ${act}\n`;
+    m += `  📅 ${fmtDateTime(e.timestamp)}\n`;
+    if (i < sorted.length - 1) m += `  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+function formatMaintenanceText(data) {
+  const open = data.filter(e => e.status !== 'solved').length;
+  const solved = data.length - open;
+  let m = `🔧 ✦ *𝗠𝗔𝗜𝗡𝗧𝗘𝗡𝗔𝗡𝗖𝗘 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 🔧\n${LINE}\n`;
+  m += `📊 *𝗧𝗼𝗧𝗮𝗹:* ${data.length} | 🔴 *𝗢𝗽𝗲𝗻:* ${open} | ✅ *𝗦𝗼𝗹𝘃𝗲𝗱:* ${solved}\n${DIV}\n\n`;
+  data.forEach((e, i) => {
+    const stIcon = e.status === 'solved' ? '✅' : '🔴';
+    m += `${stIcon} *#${i + 1} — ${e.category || 'Issue'}*\n`;
+    m += `  📝 ${e.subject || 'N/A'}\n`;
+    m += `  📄 ${e.description || 'N/A'}\n`;
+    m += `  📅 ${fmtDate(e.timestamp)}\n`;
+    if (e.solvedAt) m += `  ✅ Solved: ${fmtDate(e.solvedAt)}\n`;
+    if (i < data.length - 1) m += `  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+function formatSamplesText(data) {
+  const inCount = data.filter(e => e.type === 'in').length;
+  const outCount = data.length - inCount;
+  let m = `🧪 ✦ *𝗦𝗔𝗠𝗣𝗟𝗘𝗦 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 🧪\n${LINE}\n`;
+  m += `📥 *𝗜𝗻:* ${inCount} | 📤 *𝗢𝘂𝘁:* ${outCount} | 📊 *𝗧𝗼𝗧𝗮𝗹:* ${data.length}\n${DIV}\n\n`;
+  data.forEach((e, i) => {
+    const icon = e.type === 'in' ? '📥' : '📤';
+    const label = e.type === 'in' ? 'RECEIVED' : 'SENT OUT';
+    m += `${icon} *${label}* — ${e.personName || 'N/A'}\n`;
+    m += `  📋 Program: ${e.program || 'N/A'}\n`;
+    m += `  🔢 Pieces: ${e.pieces || 'N/A'}\n`;
+    m += `  📅 ${fmtDate(e.timestamp)}\n`;
+    if (i < data.length - 1) m += `  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+function formatClippingText(data) {
+  const inEntries = data.filter(e => e.type === 'in');
+  let totalSize = 0;
+  inEntries.forEach(e => { const n = parseFloat(e.size); if (!isNaN(n)) totalSize += n; });
+  const totalPay = totalSize * 12;
+  let m = `✂️ ✦ *𝗖𝗟𝗜𝗣𝗣𝗜𝗡𝗚 𝗥𝗘𝗣𝗢𝗥𝗧* ✂️\n${LINE}\n`;
+  m += `📊 *𝗧𝗼𝗧𝗮𝗹:* ${data.length} entries\n`;
+  m += `📏 *𝗧𝗼𝗧𝗮𝗹 𝗬𝗮𝗿𝗱𝘀:* ${totalSize}\n`;
+  m += `💰 *𝗧𝗼𝗧𝗮𝗹 𝗣𝗮𝘆𝗺𝗲𝗻𝘁:* Rs. ${totalPay.toLocaleString()} (${totalSize}×12)\n${DIV}\n\n`;
+  data.forEach((e, i) => {
+    let icon, label;
+    if (e.type === 'in') { icon = '📥'; label = 'CLIPPED IN'; }
+    else if (e.type === 'transfer') { icon = '💸'; label = 'TRANSFER'; }
+    else { icon = '📤'; label = 'OUT FOR CLIPPING'; }
+    m += `${icon} *${label}* — ${e.clipperName || 'N/A'}\n`;
+    m += `  📏 Size: ${e.size || 'N/A'} yards\n`;
+    m += `  📅 ${fmtDate(e.timestamp)}\n`;
+    if (i < data.length - 1) m += `  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n`;
+  });
+  m += `\n${END}\n🏢 *${BOT_NAME}*\n🌐 https://zaidbwp.vercel.app`;
+  return m;
+}
+
+// ─── Send File Helper ─────────────────────────────────────────────────────────
+async function sendXlsx(sock, chatId, data, genFn, fileName, caption) {
+  if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No data found.' }); return; }
+  const buf = await genFn(data);
+  if (!buf) { await sock.sendMessage(chatId, { text: '❌ Could not generate file.' }); return; }
+  const tmpDir = path.join(__dirname, 'tmp');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+  const tmpFile = path.join(tmpDir, fileName + '_' + Date.now() + '.xlsx');
+  fs.writeFileSync(tmpFile, buf);
+  await sock.sendMessage(chatId, {
+    document: fs.readFileSync(tmpFile), fileName: fileName + '.xlsx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    caption
+  });
+  fs.unlinkSync(tmpFile);
+}
+
+// ─── Session Restore ──────────────────────────────────────────────────────────
+let loggedOutOnce = false;
 
 function restoreSession() {
   const sessionId = process.env.SESSION_ID;
-  if (!sessionId) {
-    console.log('[SESSION] No SESSION_ID env var. Will generate QR for pairing.');
-    return false;
-  }
-
+  if (!sessionId) { log('[SESSION] No SESSION_ID. Will generate QR.'); return false; }
   try {
-    if (!fs.existsSync(SESSION_DIR)) {
-      fs.mkdirSync(SESSION_DIR, { recursive: true });
-    }
-
-    // Check if session already has valid creds
+    if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
     const credsFile = path.join(SESSION_DIR, 'creds.json');
     if (fs.existsSync(credsFile)) {
       const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-      if (creds.me) {
-        console.log('[SESSION] Existing valid session found for ' + (creds.me.id || 'unknown'));
-        return true;
-      }
+      if (creds.me) { log('[SESSION] Valid session found for ' + (creds.me.id || '?')); return true; }
     }
-
-    // Try to decode SESSION_ID (format: PREFIX~base64data)
-    console.log('[SESSION] Restoring session from SESSION_ID...');
     const base64Data = sessionId.includes('~') ? sessionId.split('~').slice(1).join('~') : sessionId;
     const buffer = Buffer.from(base64Data, 'base64');
-
-    // Try as ZIP first (contains session folder structure)
     try {
       const AdmZip = require('adm-zip');
       const zip = new AdmZip(buffer);
-      const entries = zip.getEntries();
-
-      if (entries.length > 0) {
-        zip.extractAllTo(SESSION_DIR, true);
-        console.log('[SESSION] Extracted ZIP with ' + entries.length + ' files');
-        return true;
-      }
-    } catch (zipErr) {
-      // Not a ZIP, try as JSON
-    }
-
-    // Try as JSON (creds data)
-    try {
-      const jsonStr = buffer.toString('utf8');
-      const json = JSON.parse(jsonStr);
-      if (json.creds || json.me || json.account) {
-        // Write as creds.json
-        fs.writeFileSync(credsFile, JSON.stringify(json, null, 2), 'utf8');
-        console.log('[SESSION] Restored creds from SESSION_ID JSON');
-        return true;
-      }
-    } catch (jsonErr) {
-      // Not JSON either
-    }
-
-    // Try writing raw decoded content as creds.json
-    try {
-      const jsonStr = buffer.toString('utf8');
-      const json = JSON.parse(jsonStr);
-      fs.writeFileSync(credsFile, JSON.stringify(json, null, 2), 'utf8');
-      console.log('[SESSION] Restored raw SESSION_ID as creds.json');
-      return true;
+      if (zip.getEntries().length > 0) { zip.extractAllTo(SESSION_DIR, true); return true; }
     } catch (_) {}
-
-    console.log('[SESSION] Could not decode SESSION_ID format. Will generate QR.');
+    try {
+      const json = JSON.parse(buffer.toString('utf8'));
+      if (json.creds || json.me || json.account) {
+        fs.writeFileSync(credsFile, JSON.stringify(json, null, 2), 'utf8'); return true;
+      }
+      fs.writeFileSync(credsFile, JSON.stringify(json, null, 2), 'utf8'); return true;
+    } catch (_) {}
     return false;
-
-  } catch (err) {
-    console.error('[SESSION] Restore error:', err.message);
-    return false;
-  }
+  } catch (err) { log('[SESSION] Restore error: ' + err.message); return false; }
 }
 
-// ─── Process Message Queue ───────────────────────────────────────────────────
-
+// ─── Outbox Processing ────────────────────────────────────────────────────────
 async function processOutbox(sock) {
   const outbox = readOutbox();
   const pending = outbox.filter(m => !m.sent);
-
-  if (pending.length === 0) return { processed: 0, failed: 0 };
-
-  let processed = 0;
-  let failed = 0;
-
+  if (!pending.length) return { processed: 0, failed: 0 };
+  let processed = 0, failed = 0;
   for (const entry of pending) {
     try {
       const target = entry.to.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
       await sock.sendMessage(target, { text: entry.message });
-      entry.sent = true;
-      entry.sentAt = new Date().toISOString();
-      entry.error = null;
-      processed++;
-      console.log('[OUTBOX] Sent to +' + entry.to);
+      entry.sent = true; entry.sentAt = new Date().toISOString(); entry.error = null;
+      processed++; sentCount++;
+      log('[OUTBOX] ✅ Sent to +' + entry.to);
     } catch (err) {
-      entry.error = err.message;
-      failed++;
-      console.error('[OUTBOX] Failed to +' + entry.to + ': ' + err.message);
+      entry.error = err.message; failed++;
+      log('[OUTBOX] ❌ Failed +' + entry.to + ': ' + err.message);
     }
   }
-
-  // Clean old sent messages (keep 1 hour)
-  const cleaned = outbox.filter(m => {
-    if (!m.sent) return true;
-    return (Date.now() - new Date(m.sentAt).getTime()) < 3600000;
-  });
+  const cleaned = outbox.filter(m => !m.sent || (Date.now() - new Date(m.sentAt).getTime()) < 3600000);
   writeOutbox(cleaned.length > 200 ? cleaned.slice(-200) : cleaned);
-
   return { processed, failed };
 }
 
-let loggedOutOnce = false;
+// ─── Express API Server ───────────────────────────────────────────────────────
+const app = express();
+app.use(express.json({ limit: '1mb' }));
 
-// ─── Main Bot ────────────────────────────────────────────────────────────────
+function authMiddleware(req, res, next) {
+  const secret = req.body?.secret;
+  if (secret !== API_SECRET) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  next();
+}
 
+// Health check
+app.get('/', (req, res) => {
+  res.json({ bot: BOT_NAME, online: true, whatsappConnected, uptime: Math.floor((Date.now() - startTime) / 1000) + 's' });
+});
+
+// Status endpoint (called by Vercel wa-status.js)
+app.get('/status', (req, res) => {
+  const pending = readOutbox().filter(m => !m.sent).length;
+  res.json({
+    online: true, botRunning, whatsappConnected,
+    pendingMessages: pending, sentMessages: sentCount,
+    adminNumber: ADMIN_NUMBER,
+    uptime: Math.floor((Date.now() - startTime) / 1000) + 's',
+    recentLogs: botLogs.slice(-10)
+  });
+});
+
+// Send endpoint (called by Vercel _notify-helper.js & whatsapp-send.js)
+app.post('/send', authMiddleware, (req, res) => {
+  const { message, to } = req.body;
+  if (!message) return res.status(400).json({ success: false, error: 'message required' });
+  const target = (to || ADMIN_NUMBER).replace(/[^0-9]/g, '');
+
+  const entry = {
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    to: target, message, sent: false,
+    createdAt: new Date().toISOString()
+  };
+  const outbox = readOutbox();
+  outbox.push(entry);
+  writeOutbox(outbox.length > 500 ? outbox.slice(-500) : outbox);
+  log('[API] Queued message for +' + target);
+
+  // Immediate send if WhatsApp connected
+  if (whatsappConnected && sockRef) {
+    processImmediateSend(sockRef, entry).catch(err => {
+      log('[API] Immediate send failed: ' + err.message);
+    });
+  }
+  res.json({ success: true, message: 'Message queued for +' + target, id: entry.id });
+});
+
+async function processImmediateSend(sock, entry) {
+  if (entry.sent) return;
+  const target = entry.to.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  await sock.sendMessage(target, { text: entry.message });
+  entry.sent = true; entry.sentAt = new Date().toISOString();
+  sentCount++;
+  log('[IMMEDIATE] ✅ Sent to +' + entry.to);
+  // Update outbox
+  const outbox = readOutbox();
+  const idx = outbox.findIndex(m => m.id === entry.id);
+  if (idx >= 0) { outbox[idx] = entry; writeOutbox(outbox); }
+}
+
+// ─── Main Bot ─────────────────────────────────────────────────────────────────
 async function startBot() {
-  // Try to restore session from SESSION_ID (only if not previously logged out)
-  if (!loggedOutOnce) {
-    restoreSession();
-  }
-
-  // Ensure session dir exists
-  if (!fs.existsSync(SESSION_DIR)) {
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
-  }
+  if (!loggedOutOnce) restoreSession();
+  if (!fs.existsSync(SESSION_DIR)) fs.mkdirSync(SESSION_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
 
-  // Try to get latest version, fallback to default
   let waVersion = [2, 2413, 1];
   try {
     const baileys = require('@whiskeysockets/baileys');
     if (typeof baileys.fetchLatestBaileysVersion === 'function') {
       const { version } = await baileys.fetchLatestBaileysVersion();
       waVersion = version;
-      console.log('[BOT] Using Baileys WA version: ' + waVersion.join('.'));
     }
   } catch (_) {}
 
   const sock = makeWASocket({
-    version: waVersion,
-    auth: state,
+    version: waVersion, auth: state,
     logger: pino({ level: 'silent' }),
     printQRInTerminal: true,
-    browser: ['Banu Saeed Hospital', 'Chrome', '1.0.0'],
+    browser: [BOT_NAME, 'Chrome', '2.0.0'],
     generateHighQualityLinkPreview: false,
   });
 
-  // Save creds on update
   sock.ev.on('creds.update', saveCreds);
 
-  // Connection handler
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      console.log('[QR] New QR code generated. Scan in WhatsApp > Linked Devices.');
-    }
+    if (qr) log('[QR] New QR code generated — scan in WhatsApp > Linked Devices');
 
     if (connection === 'open') {
-      whatsappConnected = true;
-      sockRef = sock;
-      console.log('═══════════════════════════════════════════');
-      console.log('  WhatsApp Bot CONNECTED');
-      console.log('  Account: ' + (sock.user?.id || 'unknown'));
-      console.log('═══════════════════════════════════════════');
+      whatsappConnected = true; sockRef = sock; botRunning = true;
+      log('═══════════════════════════════════');
+      log('  ✅ WhatsApp CONNECTED');
+      log('  Account: ' + (sock.user?.id || 'unknown'));
+      log('═══════════════════════════════════');
 
-      // Process outbox immediately on connect
       const result = await processOutbox(sock);
-      if (result.processed > 0) {
-        console.log('[OUTBOX] Initial send: ' + result.processed + ' sent, ' + result.failed + ' failed');
-      }
+      if (result.processed > 0) log('[OUTBOX] Initial: ' + result.processed + ' sent');
 
-      // Auto-process every 30 seconds
       setInterval(async () => {
         try {
           const r = await processOutbox(sock);
-          if (r.processed > 0) {
-            console.log('[OUTBOX] Auto-send: ' + r.processed + ' sent');
-            botLogs.push('[OUTBOX] Auto-send: ' + r.processed + ' sent');
-          }
-        } catch (err) {
-          console.error('[OUTBOX] Auto-send error:', err.message);
-        }
+          if (r.processed > 0) log('[OUTBOX] Auto: ' + r.processed + ' sent');
+        } catch (err) { log('[OUTBOX] Auto error: ' + err.message); }
       }, 30000);
     }
 
     if (connection === 'close') {
-      whatsappConnected = false;
       const reason = lastDisconnect?.error?.output?.statusCode;
-      console.log('[CONN] Connection closed. Reason code: ' + reason);
-
+      log('[CONN] Closed. Reason: ' + reason);
       if (reason === DisconnectReason.loggedOut) {
-        console.log('[CONN] Session LOGGED OUT (401).');
-        // Clear session dir
-        try {
-          const files = fs.readdirSync(SESSION_DIR);
-          for (const f of files) {
-            fs.unlinkSync(path.join(SESSION_DIR, f));
-          }
-        } catch (_) {}
-
+        whatsappConnected = false; sockRef = null;
+        try { fs.readdirSync(SESSION_DIR).forEach(f => fs.unlinkSync(path.join(SESSION_DIR, f))); } catch (_) {}
         if (!loggedOutOnce) {
           loggedOutOnce = true;
-          console.log('[CONN] SESSION_ID is invalid. Generating new QR for pairing...');
-          console.log('[CONN] Scan the QR code in WhatsApp > Linked Devices > Link a Device');
-          // Restart once to generate fresh QR (without trying old SESSION_ID)
+          log('[CONN] SESSION_ID invalid. Generating new QR...');
           setTimeout(startBot, 2000);
         } else {
-          console.log('[CONN] Waiting 60s before retry (scan QR code from Railway logs)...');
+          log('[CONN] Waiting 60s before retry...');
           setTimeout(startBot, 60000);
         }
       } else {
-        console.log('[CONN] Reconnecting in 5s...');
+        log('[CONN] Reconnecting in 5s...');
         setTimeout(startBot, 5000);
       }
     }
   });
 
-  // Message handler
+  // ─── Message Handler (.commands) ─────────────────────────────────────────
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0];
     if (!msg.message) return;
-
     const chatId = msg.key.remoteJid;
-    const text = msg.message.conversation
-      || msg.message.extendedTextMessage?.text
-      || '';
-
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
     if (!text.startsWith('.')) return;
-
-    const parts = text.trim().split(/\s+/);
-    const cmd = parts[0].toLowerCase();
+    const cmd = text.trim().split(/\s+/)[0].toLowerCase();
 
     try {
       // .ping
       if (cmd === '.ping') {
         const start = Date.now();
-        await sock.sendMessage(chatId, { text: 'Pong!' });
-        const latency = Date.now() - start;
+        await sock.sendMessage(chatId, { text: '⚡ Pong!' });
         await sock.sendMessage(chatId, {
-          text: '*BANU SAEED HOSPITAL Bot*\nLatency: ' + latency + 'ms\nStatus: Online'
-        });
-      }
-
-      // .sendoutbox
-      if (cmd === '.sendoutbox') {
-        const sub = (parts[1] || '').toLowerCase();
-
-        if (sub === 'status') {
-          const outbox = readOutbox();
-          const pending = outbox.filter(m => !m.sent).length;
-          const sent = outbox.filter(m => m.sent).length;
-          await sock.sendMessage(chatId, {
-            text: '*QUEUE STATUS*\nPending: ' + pending + '\nSent: ' + sent + '\nAuto-send: every 30s'
-          });
-          return;
-        }
-
-        const result = await processOutbox(sock);
-        const outbox = readOutbox();
-        const pending = outbox.filter(m => !m.sent).length;
-        await sock.sendMessage(chatId, {
-          text: '*QUEUE PROCESSED*\nSent: ' + result.processed + '\nFailed: ' + result.failed + '\nRemaining: ' + pending
+          text: `🏢 *${BOT_NAME}*\n⚡ Latency: ${Date.now() - start}ms\n🟢 Status: Online\n📦 Version: 2.0`
         });
       }
 
       // .status
       if (cmd === '.status') {
-        const outbox = readOutbox();
-        const pending = outbox.filter(m => !m.sent).length;
+        const pending = readOutbox().filter(m => !m.sent).length;
         await sock.sendMessage(chatId, {
-          text: '*BANU SAEED HOSPITAL*\nBot: Online\nAccount: ' + (sock.user?.id || 'unknown') + '\nPending messages: ' + pending + '\nUptime: ' + Math.floor(process.uptime()) + 's'
+          text: `🏢 *${BOT_NAME}*\n${LINE}\n🟢 Bot: Online\n📱 Account: ${sock.user?.id || 'unknown'}\n📨 Pending: ${pending}\n✅ Sent: ${sentCount}\n⏱️ Uptime: ${Math.floor((Date.now() - startTime) / 1000)}s\n${END}`
         });
       }
 
-      // ─── Stock Manager Commands ────────────────────────────────────────────
+      // .sendoutbox
+      if (cmd === '.sendoutbox') {
+        const sub = (text.trim().split(/\s+/)[1] || '').toLowerCase();
+        if (sub === 'status') {
+          const outbox = readOutbox();
+          await sock.sendMessage(chatId, {
+            text: `📬 *QUEUE STATUS*\n⏳ Pending: ${outbox.filter(m => !m.sent).length}\n✅ Sent: ${outbox.filter(m => m.sent).length}\n🔄 Auto-send: every 30s`
+          });
+          return;
+        }
+        const result = await processOutbox(sock);
+        const pending = readOutbox().filter(m => !m.sent).length;
+        await sock.sendMessage(chatId, {
+          text: `📬 *QUEUE PROCESSED*\n✅ Sent: ${result.processed}\n❌ Failed: ${result.failed}\n⏳ Remaining: ${pending}`
+        });
+      }
 
-      // .items - send items.xlsx
+      // ═══ ITEMS ═══
       if (cmd === '.items') {
-        await sock.sendMessage(chatId, { text: '📦 Fetching items data...' });
+        await sock.sendMessage(chatId, { text: '📦 Fetching items...' });
         const data = await fetchStockData('items');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No items data found.' });
-          return;
-        }
-        const buf = await generateItemsXlsx(data);
-        const tmpFile = path.join(__dirname, 'tmp', 'items_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'items.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '📦 *ITEMS* (' + data.length + ' entries)\n📅 ' + new Date().toLocaleDateString('en-GB')
-        });
-        fs.unlinkSync(tmpFile);
+        await sendXlsx(sock, chatId, data, generateItemsXlsx, 'items',
+          `📦 *ITEMS* (${data.length} entries)\n📅 ${new Date().toLocaleDateString('en-GB')}`);
+      }
+      if (cmd === '.items2') {
+        await sock.sendMessage(chatId, { text: '📦 Loading items details...' });
+        const data = await fetchStockData('items');
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No items data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatItemsText(data) });
       }
 
-      // .wallet - send wallet.xlsx
+      // ═══ WALLET ═══
       if (cmd === '.wallet') {
-        await sock.sendMessage(chatId, { text: '💰 Fetching wallet data...' });
+        await sock.sendMessage(chatId, { text: '💰 Fetching wallet...' });
         const data = await fetchStockData('wallet');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No wallet data found.' });
-          return;
-        }
-        const buf = await generateWalletXlsx(data);
-        const tmpFile = path.join(__dirname, 'tmp', 'wallet_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
         const totalIn = data.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
         const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-        const balance = totalIn - totalOut;
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'wallet.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '💰 *WALLET*\n📥 Received: Rs. ' + totalIn.toLocaleString() + '\n📤 Spent: Rs. ' + totalOut.toLocaleString() + '\n🏦 Balance: Rs. ' + balance.toLocaleString()
-        });
-        fs.unlinkSync(tmpFile);
+        await sendXlsx(sock, chatId, data, generateWalletXlsx, 'wallet',
+          `💰 *WALLET*\n📥 Received: Rs. ${totalIn.toLocaleString()}\n📤 Spent: Rs. ${totalOut.toLocaleString()}\n🏦 Balance: Rs. ${(totalIn - totalOut).toLocaleString()}`);
       }
-
-      // .wallettxt - send all wallet details as formatted text
-      if (cmd === '.wallettxt') {
+      if (cmd === '.wallet2' || cmd === '.wallettxt') {
+        await sock.sendMessage(chatId, { text: '💰 Loading wallet details...' });
         const data = await fetchStockData('wallet');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No wallet data found.' });
-          return;
-        }
-        const totalIn = data.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
-        const totalOut = data.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-        const balance = totalIn - totalOut;
-        const balEmoji = balance >= 0 ? '✅' : '⚠️';
-        const line = '══════════════════════════════';
-        const div = '──────────────────────────────';
-        let msg = '💰 ✦ *𝗪𝗔𝗟𝗟𝗘𝗧 𝗥𝗘𝗣𝗢𝗥𝗧* ✦ 💰\n' + line + '\n';
-        msg += '📥 *𝗧𝗼𝗧𝗮𝗹 𝗥𝗲𝗰𝗲𝗶𝘃𝗲𝗱:* Rs. ' + totalIn.toLocaleString() + '\n';
-        msg += '📤 *𝗧𝗼𝗧𝗮𝗹 𝗦𝗽𝗲𝗻𝘁:* Rs. ' + totalOut.toLocaleString() + '\n';
-        msg += '🏦 *𝗕𝗮𝗹𝗮𝗻𝗰𝗲:* ' + balEmoji + ' Rs. ' + balance.toLocaleString() + '\n';
-        msg += '📊 *𝗘𝗻𝘁𝗿𝗶𝗲𝘀:* ' + data.length + '\n' + line + '\n\n';
-        data.forEach((e, i) => {
-          const amt = Number(e.amount) || 0;
-          const icon = e.type === 'in' ? '📥' : '📤';
-          const date = e.timestamp ? new Date(e.timestamp).toLocaleDateString('en-GB') : '';
-          msg += icon + ' *' + (e.type || '').toUpperCase() + '* — Rs. ' + amt.toLocaleString() + '\n';
-          msg += '  👤 ' + (e.personOrPurpose || 'N/A') + '\n';
-          msg += '  📅 ' + date + '\n';
-          if (i < data.length - 1) msg += div + '\n';
-        });
-        msg += '\n' + line + '\n👨‍💻 *𝗭𝗔𝗜𝗗 𝗕𝗪𝗣 𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥*\n🌐 https://zaidbwp.vercel.app';
-        await sock.sendMessage(chatId, { text: msg });
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No wallet data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatWalletText(data) });
       }
 
-      // .person - send person.xlsx
+      // ═══ PERSON ═══
       if (cmd === '.person') {
-        await sock.sendMessage(chatId, { text: '👷 Fetching person data...' });
+        await sock.sendMessage(chatId, { text: '👷 Fetching attendance...' });
         const data = await fetchStockData('person');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No person data found.' });
-          return;
-        }
-        const buf = await generatePersonXlsx(data);
-        const tmpFile = path.join(__dirname, 'tmp', 'person_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'person.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '👷 *PERSON ATTENDANCE* (' + data.length + ' entries)'
-        });
-        fs.unlinkSync(tmpFile);
+        await sendXlsx(sock, chatId, data, generatePersonXlsx, 'person',
+          `👷 *PERSON ATTENDANCE* (${data.length} entries)`);
+      }
+      if (cmd === '.person2') {
+        await sock.sendMessage(chatId, { text: '👷 Loading attendance details...' });
+        const data = await fetchStockData('person');
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No person data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatPersonText(data) });
       }
 
-      // .maintenance - send maintenance.xlsx
+      // ═══ MAINTENANCE ═══
       if (cmd === '.maintenance') {
-        await sock.sendMessage(chatId, { text: '🔧 Fetching maintenance data...' });
+        await sock.sendMessage(chatId, { text: '🔧 Fetching maintenance...' });
         const data = await fetchStockData('maintenance');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No maintenance data found.' });
-          return;
-        }
-        const buf = await generateGenericXlsx('maintenance', data);
-        const tmpFile = path.join(__dirname, 'tmp', 'maintenance_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
         const open = data.filter(e => e.status !== 'solved').length;
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'maintenance.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🔧 *MAINTENANCE* (' + data.length + ' issues | 🔴 ' + open + ' open | ✅ ' + (data.length - open) + ' solved)'
-        });
-        fs.unlinkSync(tmpFile);
+        await sendXlsx(sock, chatId, data, (d) => generateGenericXlsx('maintenance', d), 'maintenance',
+          `🔧 *MAINTENANCE* (${data.length} issues | 🔴 ${open} open | ✅ ${data.length - open} solved)`);
+      }
+      if (cmd === '.maintenance2') {
+        await sock.sendMessage(chatId, { text: '🔧 Loading maintenance details...' });
+        const data = await fetchStockData('maintenance');
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No maintenance data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatMaintenanceText(data) });
       }
 
-      // .samples - send samples.xlsx
+      // ═══ SAMPLES ═══
       if (cmd === '.samples') {
-        await sock.sendMessage(chatId, { text: '🧪 Fetching samples data...' });
+        await sock.sendMessage(chatId, { text: '🧪 Fetching samples...' });
         const data = await fetchStockData('samples');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No samples data found.' });
-          return;
-        }
-        const buf = await generateGenericXlsx('samples', data);
-        const tmpFile = path.join(__dirname, 'tmp', 'samples_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'samples.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '🧪 *SAMPLES* (' + data.length + ' entries)'
-        });
-        fs.unlinkSync(tmpFile);
+        await sendXlsx(sock, chatId, data, (d) => generateGenericXlsx('samples', d), 'samples',
+          `🧪 *SAMPLES* (${data.length} entries)`);
+      }
+      if (cmd === '.samples2') {
+        await sock.sendMessage(chatId, { text: '🧪 Loading samples details...' });
+        const data = await fetchStockData('samples');
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No samples data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatSamplesText(data) });
       }
 
-      // .clipping - send clipping.xlsx
+      // ═══ CLIPPING ═══
       if (cmd === '.clipping') {
-        await sock.sendMessage(chatId, { text: '✂️ Fetching clipping data...' });
+        await sock.sendMessage(chatId, { text: '✂️ Fetching clipping...' });
         const data = await fetchStockData('clipping');
-        if (!data.length) {
-          await sock.sendMessage(chatId, { text: '❌ No clipping data found.' });
-          return;
-        }
-        const buf = await generateGenericXlsx('clipping', data);
-        const tmpFile = path.join(__dirname, 'tmp', 'clipping_' + Date.now() + '.xlsx');
-        if (!fs.existsSync(path.join(__dirname, 'tmp'))) fs.mkdirSync(path.join(__dirname, 'tmp'), { recursive: true });
-        fs.writeFileSync(tmpFile, buf);
-        const inEntries = data.filter(e => e.type === 'in');
+        const inE = data.filter(e => e.type === 'in');
         let totalSize = 0;
-        inEntries.forEach(e => { const n = parseFloat(e.size); if (!isNaN(n)) totalSize += n; });
-        const totalPayment = totalSize * 12;
-        await sock.sendMessage(chatId, {
-          document: fs.readFileSync(tmpFile),
-          fileName: 'clipping.xlsx',
-          mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          caption: '✂️ *CLIPPING* (' + data.length + ' entries | ' + totalSize + ' yards | 💰 Rs. ' + totalPayment.toLocaleString() + ')'
-        });
-        fs.unlinkSync(tmpFile);
+        inE.forEach(e => { const n = parseFloat(e.size); if (!isNaN(n)) totalSize += n; });
+        await sendXlsx(sock, chatId, data, (d) => generateGenericXlsx('clipping', d), 'clipping',
+          `✂️ *CLIPPING* (${data.length} entries | ${totalSize} yards | 💰 Rs. ${(totalSize * 12).toLocaleString()})`);
+      }
+      if (cmd === '.clipping2') {
+        await sock.sendMessage(chatId, { text: '✂️ Loading clipping details...' });
+        const data = await fetchStockData('clipping');
+        if (!data.length) { await sock.sendMessage(chatId, { text: '❌ No clipping data.' }); return; }
+        await sock.sendMessage(chatId, { text: formatClippingText(data) });
       }
 
-      // .stock - show all stock commands help
-      if (cmd === '.stock' || cmd === '.help') {
+      // ═══ HELP ═══
+      if (cmd === '.help' || cmd === '.stock') {
         const helpMsg = [
-          '🤖 *𝗭𝗔𝗜𝗗 𝗕𝗪𝗣 𝗦𝗧𝗢𝗖𝗞 𝗕𝗢𝗧*',
-          '══════════════════════════════',
-          '📦 *.items* — Send items.xlsx',
-          '💰 *.wallet* — Send wallet.xlsx',
-          '📝 *.wallettxt* — Wallet details (text)',
-          '👷 *.person* — Send attendance.xlsx',
-          '🔧 *.maintenance* — Send maintenance.xlsx',
-          '🧪 *.samples* — Send samples.xlsx',
-          '✂️ *.clipping* — Send clipping.xlsx',
-          '──────────────────────────────',
-          '📌 *.ping* — Check latency',
-          '📌 *.status* — Bot status',
-          '📌 *.sendoutbox* — Process queue',
-          '══════════════════════════════',
-          '👨‍💻 _ZAID ASHIQ BWP_',
+          `🏢 *${BOT_NAME}*`,
+          LINE,
+          '',
+          '📦 *.items* — Items Excel file',
+          '📦 *.items2* — Items text details',
+          '',
+          '💰 *.wallet* — Wallet Excel file',
+          '💰 *.wallet2* — Wallet text details',
+          '',
+          '👷 *.person* — Person Excel file',
+          '👷 *.person2* — Person text details',
+          '',
+          '🔧 *.maintenance* — Maint. Excel file',
+          '🔧 *.maintenance2* — Maint. text details',
+          '',
+          '🧪 *.samples* — Samples Excel file',
+          '🧪 *.samples2* — Samples text details',
+          '',
+          '✂️ *.clipping* — Clipping Excel file',
+          '✂️ *.clipping2* — Clipping text details',
+          '',
+          DIV,
+          '⚡ *.ping* — Check latency',
+          '📊 *.status* — Bot status',
+          '📬 *.sendoutbox* — Process queue',
+          END,
+          `🏢 *${BOT_NAME}*`,
           '🌐 https://zaidbwp.vercel.app'
         ].join('\n');
         await sock.sendMessage(chatId, { text: helpMsg });
       }
 
     } catch (err) {
-      console.error('[CMD] Error handling ' + cmd + ':', err.message);
-      try {
-        await sock.sendMessage(chatId, { text: 'Error: ' + err.message });
-      } catch (_) {}
+      log('[CMD] Error ' + cmd + ': ' + err.message);
+      try { await sock.sendMessage(chatId, { text: '❌ Error: ' + err.message }); } catch (_) {}
     }
   });
 }
 
-// ─── Express API Server ─────────────────────────────────────────────────────
-
-const app = express();
-app.use(express.json());
-
-// Auth middleware
-function authMiddleware(req, res, next) {
-  const { secret } = req.body;
-  if (secret !== API_SECRET) {
-    return res.status(401).json({ success: false, error: 'Unauthorized' });
-  }
-  next();
-}
-
-// Health check
-app.get('/', (req, res) => {
-  const outbox = readOutbox();
-  const pending = outbox.filter(m => !m.sent).length;
-  res.json({
-    status: 'online',
-    service: 'Banu Saeed Hospital WhatsApp API',
-    whatsappConnected,
-    uptime: Math.floor(process.uptime()) + 's',
-    pendingMessages: pending
-  });
-});
-
-// Status endpoint
-app.get('/status', (req, res) => {
-  const outbox = readOutbox();
-  const pending = outbox.filter(m => !m.sent).length;
-  const sent = outbox.filter(m => m.sent).length;
-  res.json({
-    online: true,
-    botRunning: true,
-    whatsappConnected,
-    pendingMessages: pending,
-    sentMessages: sent,
-    adminNumber: ADMIN_NUMBER,
-    uptime: Math.floor(process.uptime()) + 's',
-    recentLogs: botLogs.slice(-10)
-  });
-});
-
-// Send message (queues for auto-send)
-app.post('/send', authMiddleware, (req, res) => {
-  try {
-    const { message, to } = req.body;
-    if (!message) return res.status(400).json({ success: false, error: 'message is required' });
-
-    const target = (to || ADMIN_NUMBER).replace(/[^0-9]/g, '');
-    if (target.length < 7) return res.status(400).json({ success: false, error: 'Invalid phone number' });
-
-    const outbox = readOutbox();
-    const entry = {
-      id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-      to: target,
-      message: message,
-      sent: false,
-      queuedAt: new Date().toISOString(),
-      sentAt: null,
-      error: null
-    };
-    outbox.push(entry);
-
-    const cleaned = outbox.filter(m => !m.sent || (Date.now() - new Date(m.sentAt).getTime() < 3600000));
-    writeOutbox(cleaned.length > 200 ? cleaned.slice(-200) : cleaned);
-
-    console.log('[QUEUE] Queued for +' + target + ' (' + entry.id + ')');
-
-    // If WhatsApp is connected, send immediately
-    if (whatsappConnected && sockRef) {
-      processImmediateSend(sockRef, entry).catch(err => {
-        console.error('[QUEUE] Immediate send failed:', err.message);
-      });
-    }
-
-    res.json({ success: true, message: 'Message queued for +' + target, id: entry.id });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Pair endpoint
-app.post('/pair', authMiddleware, (req, res) => {
-  res.json({
-    success: true,
-    message: 'Check Railway logs for QR code. Scan in WhatsApp > Linked Devices > Link a Device.'
-  });
-});
-
-// Debug endpoint
-app.get('/debug', (req, res) => {
-  res.json({
-    online: true,
-    botRunning: true,
-    whatsappConnected,
-    uptime: Math.floor(process.uptime()) + 's',
-    nodeVersion: process.version,
-    env: {
-      PORT: process.env.PORT || '3001 (default)',
-      SESSION_ID: process.env.SESSION_ID ? 'SET (' + process.env.SESSION_ID.substring(0, 8) + '...)' : 'NOT SET',
-      API_SECRET: process.env.API_SECRET ? 'SET' : 'NOT SET',
-      ADMIN_NUMBER: process.env.ADMIN_NUMBER || '923299931199 (default)',
-    },
-    recentLogs: botLogs.slice(-20)
-  });
-});
-
-// Immediate send helper
-async function processImmediateSend(sock, entry) {
-  try {
-    const target = entry.to.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-    await sock.sendMessage(target, { text: entry.message });
-    entry.sent = true;
-    entry.sentAt = new Date().toISOString();
-    entry.error = null;
-    console.log('[SEND] Immediate send to +' + entry.to);
-    // Update outbox
-    const outbox = readOutbox();
-    const idx = outbox.findIndex(m => m.id === entry.id);
-    if (idx >= 0) outbox[idx] = entry;
-    writeOutbox(outbox);
-  } catch (err) {
-    console.error('[SEND] Immediate send error:', err.message);
-    throw err;
-  }
-}
-
-// ─── Start Express + Bot ────────────────────────────────────────────────────
-
-console.log('═══════════════════════════════════════════════');
-console.log('  BANU SAEED HOSPITAL - WhatsApp Bot');
-console.log('  Admin: +' + ADMIN_NUMBER);
-console.log('  API Port: ' + PORT);
-console.log('═══════════════════════════════════════════════');
-
-// Start Express server FIRST (Railway needs this)
+// ─── Start Express THEN Bot ──────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log('[SERVER] API listening on port ' + PORT);
-  // Then start WhatsApp bot
+  log('[SERVER] ✅ API listening on port ' + PORT);
   startBot().catch(err => {
-    console.error('[FATAL] Bot failed to start:', err.message);
+    log('[FATAL] Bot failed: ' + err.message);
   });
 });
+
+log('═══════════════════════════════════════');
+log('  🏢 ' + BOT_NAME);
+log('  Admin: +' + ADMIN_NUMBER);
+log('═══════════════════════════════════════');
 
 // Prevent crashes
-process.on('uncaughtException', (err) => {
-  console.error('[BOT] Uncaught:', err.message);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('[BOT] Unhandled rejection:', reason);
-});
+process.on('uncaughtException', (err) => log('[BOT] Uncaught: ' + err.message));
+process.on('unhandledRejection', (reason) => log('[BOT] Unhandled: ' + reason));

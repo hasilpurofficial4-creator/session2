@@ -14,9 +14,7 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// Railway sets PORT dynamically; fallback to 1000 for Docker
 const PORT = process.env.PORT || 1000;
-const BOT_PORT = 3001; // Bot's internal port (not exposed)
 const API_SECRET = process.env.API_SECRET || 'banu-saeed-secret-2024';
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER || '923299931199';
 const OUTBOX_PATH = path.join(__dirname, 'data', 'outbox.json');
@@ -191,8 +189,8 @@ function startBot() {
   console.log('[BOT] Starting WhatsApp bot... (attempt ' + (restartCount + 1) + ')');
   parseBotOutput('Starting bot process...');
 
-  // Set bot's PORT to fixed internal port (not exposed externally)
-  const botEnv = { ...process.env, PORT: String(BOT_PORT) };
+  // Set bot's PORT to avoid conflict with our Express
+  const botEnv = { ...process.env, PORT: '3001' };
 
   botProcess = spawn('node', ['index.js'], {
     cwd: __dirname,
