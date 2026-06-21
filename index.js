@@ -818,6 +818,16 @@ async function startBot() {
     const parts = stripped.split(/\s+/);
     const cmd = parts[0].toLowerCase();
 
+    const KNOWN_COMMANDS = new Set([
+      'ping', 'sendoutbox', 'status', 'stock', 'help',
+      'items', 'items2', 'wallet', 'wallet2', 'wallettxt',
+      'person', 'person2', 'maintenance', 'maintenance2',
+      'samples', 'samples2', 'clipping', 'clipping2',
+      'bills', 'bills2', 'tilla',
+      'zaid', 'zaid_items', 'zaid_clipping', 'zaid_samples',
+      'zaid_wallet', 'zaid_bills'
+    ]);
+
     try {
       // .ping
       if (cmd === 'ping') {
@@ -1462,6 +1472,39 @@ async function startBot() {
           await sock.sendMessage(chatId, { text: msg });
         } catch (err) {
           await sock.sendMessage(chatId, { text: '❌ Error searching: ' + err.message });
+        }
+      }
+
+      // ─── AI Chat Fallback ──────────────────────────────────────────
+      const isKnownCmd = KNOWN_COMMANDS.has(cmd) ||
+        cmd.startsWith('bill_date_') || cmd.startsWith('bill_txt_') ||
+        cmd.startsWith('bill_xls_') || cmd.startsWith('bill_img_') ||
+        cmd.startsWith('salary') || /^\d{3,4}$/.test(stripped);
+
+      if (!isKnownCmd && text.trim().length >= 2) {
+        try {
+          log('[AI] Chat fallback for: ' + text.substring(0, 50));
+          const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
+            encodeURIComponent(text) + '&model=gpt-4o&system=' +
+            encodeURIComponent('You are a helpful, friendly assistant for a unit stock management business. Respond in the same language the user writes in. Keep responses short (2-4 sentences max), heartfelt, warm and intelligent. Do not use markdown tables. Use minimal formatting suitable for WhatsApp messages.');
+          const aiRes = await fetch(aiUrl);
+          const aiData = await aiRes.json();
+          if (aiData.success && aiData.data?.choices?.[0]?.message?.content) {
+            let aiReply = aiData.data.choices[0].message.content
+              .replace(/#{1,6}\s+/g, '')
+              .replace(/\*\*(.*?)\*\*/g, '*$1*')
+              .replace(/```[\s\S]*?```/g, '')
+              .replace(/\|.*\|/g, '')
+              .replace(/^[-]{3,}$/gm, '')
+              .trim();
+            if (aiReply.length > 800) aiReply = aiReply.substring(0, 800) + '...';
+            await sock.sendMessage(chatId, { text: aiReply });
+          } else {
+            await sock.sendMessage(chatId, { text: '🤖 Sorry, I could not process that right now. Try again later!' });
+          }
+        } catch (aiErr) {
+          log('[AI] Error: ' + aiErr.message);
+          await sock.sendMessage(chatId, { text: '🤖 Sorry, I had trouble understanding. Please try again!' });
         }
       }
 
