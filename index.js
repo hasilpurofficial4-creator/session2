@@ -64,6 +64,7 @@ function getPkMidnightTs() {
 const greetedToday = new Map();   // chatId → date string (PKT)
 const mutedUsers  = new Map();    // chatId → mute expiry timestamp (UTC ms)
 const aiActive    = new Map();    // chatId → true (AI mode active for the day)
+const entryState  = new Map();    // chatId → { step, data, token }
 function log(msg) {
   const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
   console.log(line);
@@ -371,6 +372,190 @@ async function fetchStockData(section) {
     console.error('[STOCK] Fetch ' + section + ' error:', err.message);
     return [];
   }
+}
+
+// ─── Entry Flow Helper Functions ─────────────────────────────────────
+async function botAuthenticate(password) {
+  try {
+    const res = await fetch(SITE_URL + '/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    return data.token || null;
+  } catch (e) { return null; }
+}
+
+async function botCreateEntry(section, token, body) {
+  try {
+    const res = await fetch(SITE_URL + '/api/data/' + section, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token
+      },
+      body: JSON.stringify(body)
+    });
+    return await res.json();
+  } catch (e) { return { error: e.message }; }
+}
+
+async function processEntryStep(chatId, sock, state, userText) {
+  const d = state.data;
+  const step = state.step;
+
+  // Password step
+  if (step === 'await_password') {
+    const token = await botAuthenticate(userText.trim());
+    if (!token) {
+      entryState.delete(chatId);
+      await sock.sendMessage(chatId, { text: 'Yaar password galat hai, dobara .entry likho aur sahi password bhejo 🙏' });
+      return true;
+    }
+    state.token = token;
+    state.step = 'await_category';
+    if (sendButtons) {
+      await sendButtons(sock, chatId, {
+        text: '✅ Login ho gaya yaar! Ab batao kya entry karni hai?',
+        footer: BOT_NAME,
+        buttons: [
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📦 Item', id: 'entry_item' }) },
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '✂️ Clipping', id: 'entry_clipping' }) },
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Wallet', id: 'entry_wallet' }) },
+          { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧪 Samples', id: 'entry_samples' }) },
+        ]
+      });
+    } else {
+      await sock.sendMessage(chatId, { text: 'Login OK! Batao: item, clipping, wallet, ya samples?' });
+    }
+    return true;
+  }
+
+  // Category step
+  if (step === 'await_category') {
+    const cat = userText.toLowerCase().trim();
+    if (cat === 'entry_item' || cat.includes('item')) {
+      state.step = 'item_name'; state.data.category = 'items';
+      await sock.sendMessage(chatId, { text: '📦 Item ka naam likho yaar:' });
+    } else if (cat === 'entry_clipping' || cat.includes('clip')) {
+      state.step = 'clip_type'; state.data.category = 'clipping';
+      if (sendButtons) {
+        await sendButtons(sock, chatId, {
+          text: '✂️ Clipping IN hai ya OUT?', footer: BOT_NAME,
+          buttons: [
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📥 Clipped In', id: 'clip_in' }) },
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📤 Out for Clipping', id: 'clip_out' }) },
+          ]
+        });
+      } else { await sock.sendMessage(chatId, { text: 'Clipping IN hai ya OUT? (in/out)' }); }
+    } else if (cat === 'entry_wallet' || cat.includes('wallet')) {
+      state.step = 'wallet_type'; state.data.category = 'wallet';
+      if (sendButtons) {
+        await sendButtons(sock, chatId, {
+          text: '💰 Paisa aaya (IN) ya gaya (OUT)?', footer: BOT_NAME,
+          buttons: [
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📥 Paisa Aaya', id: 'wallet_in' }) },
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📤 Paisa Gaya', id: 'wallet_out' }) },
+          ]
+        });
+      } else { await sock.sendMessage(chatId, { text: 'Paisa IN aaya ya OUT gaya? (in/out)' }); }
+    } else if (cat === 'entry_samples' || cat.includes('sample')) {
+      state.step = 'sample_type'; state.data.category = 'samples';
+      if (sendButtons) {
+        await sendButtons(sock, chatId, {
+          text: '🧪 Sample IN hai ya OUT?', footer: BOT_NAME,
+          buttons: [
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📥 Sample In', id: 'sample_in' }) },
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📤 Sample Out', id: 'sample_out' }) },
+          ]
+        });
+      } else { await sock.sendMessage(chatId, { text: 'Sample IN hai ya OUT? (in/out)' }); }
+    } else {
+      await sock.sendMessage(chatId, { text: 'Yaar samajh nahi aaya. Item, Clipping, Wallet ya Samples batao?' });
+    }
+    return true;
+  }
+
+  // Item flow
+  if (step === 'item_name') { d.name = userText.trim(); state.step = 'item_serial'; await sock.sendMessage(chatId, { text: 'Serial number likho:' }); return true; }
+  if (step === 'item_serial') { d.number = userText.trim(); state.step = 'item_person'; await sock.sendMessage(chatId, { text: 'Kis person ne laya / kis ko diya?' }); return true; }
+  if (step === 'item_person') { d.person = userText.trim(); state.step = 'item_qty'; await sock.sendMessage(chatId, { text: 'Quantity kitni hai?' }); return true; }
+  if (step === 'item_qty') { d.quantity = parseInt(userText) || 1; state.step = 'item_model'; await sock.sendMessage(chatId, { text: 'Model number likho:' }); return true; }
+  if (step === 'item_model') {
+    d.model = userText.trim();
+    const result = await botCreateEntry('items', state.token, { name: d.name, number: d.number, person: d.person, quantity: d.quantity, model: d.model, status: 'available' });
+    entryState.delete(chatId);
+    if (result.error) {
+      await sock.sendMessage(chatId, { text: '❌ Entry fail ho gayi: ' + result.error });
+    } else {
+      await sock.sendMessage(chatId, { text: '✅ *Item entry ho gayi yaar!*\n📦 ' + d.name + '\n🔢 Serial: ' + d.number + '\n👤 Person: ' + d.person + '\n📦 Qty: ' + d.quantity + '\n📐 Model: ' + d.model + '\n\nZabardast, full power! 💪' });
+    }
+    return true;
+  }
+
+  // Clipping flow
+  if (step === 'clip_type') {
+    d.type = (userText.toLowerCase().includes('out') || userText === 'clip_out') ? 'out' : 'in';
+    state.step = 'clip_person';
+    await sock.sendMessage(chatId, { text: 'Clipper ka naam likho:' });
+    return true;
+  }
+  if (step === 'clip_person') { d.clipperName = userText.trim(); state.step = 'clip_size'; await sock.sendMessage(chatId, { text: 'Size kitni hai? (yards mein)' }); return true; }
+  if (step === 'clip_size') {
+    d.size = userText.trim();
+    const result = await botCreateEntry('clipping', state.token, { type: d.type, clipperName: d.clipperName, size: d.size });
+    entryState.delete(chatId);
+    if (result.error) {
+      await sock.sendMessage(chatId, { text: '❌ Entry fail ho gayi: ' + result.error });
+    } else {
+      await sock.sendMessage(chatId, { text: '✅ *Clipping entry ho gayi!*\n✂️ ' + d.clipperName + '\n📏 Size: ' + d.size + ' yards\n🏷️ Type: ' + (d.type === 'in' ? '📥 Clipped In' : '📤 Out') + '\n\nBilkul set hai bhai! 👍' });
+    }
+    return true;
+  }
+
+  // Wallet flow
+  if (step === 'wallet_type') {
+    d.type = (userText.toLowerCase().includes('out') || userText === 'wallet_out') ? 'out' : 'in';
+    state.step = 'wallet_person';
+    await sock.sendMessage(chatId, { text: d.type === 'in' ? 'Kis se aaya paisa? (person/purpose)' : 'Kis kaam mein laga? (person/purpose)' });
+    return true;
+  }
+  if (step === 'wallet_person') { d.personOrPurpose = userText.trim(); state.step = 'wallet_amount'; await sock.sendMessage(chatId, { text: 'Amount kitna hai? (Rs.)' }); return true; }
+  if (step === 'wallet_amount') {
+    d.amount = parseInt(userText.replace(/[^0-9]/g, '')) || 0;
+    const result = await botCreateEntry('wallet', state.token, { type: d.type, personOrPurpose: d.personOrPurpose, amount: d.amount });
+    entryState.delete(chatId);
+    if (result.error) {
+      await sock.sendMessage(chatId, { text: '❌ Entry fail ho gayi: ' + result.error });
+    } else {
+      await sock.sendMessage(chatId, { text: '✅ *Wallet entry ho gayi!*\n💰 Rs. ' + d.amount.toLocaleString() + '\n👤 ' + d.personOrPurpose + '\n🏷️ Type: ' + (d.type === 'in' ? '📥 Aaya' : '📤 Gaya') + '\n\nHisab barabar yaar! 💪' });
+    }
+    return true;
+  }
+
+  // Samples flow
+  if (step === 'sample_type') {
+    d.type = (userText.toLowerCase().includes('out') || userText === 'sample_out') ? 'out' : 'in';
+    state.step = 'sample_person';
+    await sock.sendMessage(chatId, { text: 'Person ka naam likho:' });
+    return true;
+  }
+  if (step === 'sample_person') { d.personName = userText.trim(); state.step = 'sample_pieces'; await sock.sendMessage(chatId, { text: 'Kitne pieces hain?' }); return true; }
+  if (step === 'sample_pieces') { d.pieces = userText.trim(); state.step = 'sample_program'; await sock.sendMessage(chatId, { text: 'Program ka naam likho:' }); return true; }
+  if (step === 'sample_program') {
+    d.program = userText.trim();
+    const result = await botCreateEntry('samples', state.token, { type: d.type, personName: d.personName, pieces: d.pieces, program: d.program });
+    entryState.delete(chatId);
+    if (result.error) {
+      await sock.sendMessage(chatId, { text: '❌ Entry fail ho gayi: ' + result.error });
+    } else {
+      await sock.sendMessage(chatId, { text: '✅ *Sample entry ho gayi!*\n🧪 ' + d.personName + '\n🔢 Pieces: ' + d.pieces + '\n📋 Program: ' + d.program + '\n🏷️ Type: ' + (d.type === 'in' ? '📥 In' : '📤 Out') + '\n\nFull power bhai! 💪' });
+    }
+    return true;
+  }
+
+  return false;
 }
 
 async function addExcelFooter(ws) {
@@ -865,8 +1050,17 @@ async function startBot() {
       'bills', 'bills2', 'tilla',
       'zaid', 'zaid_items', 'zaid_clipping', 'zaid_samples',
       'zaid_wallet', 'zaid_bills',
+      'zaid_entry', 'entry',
       'greet_ai', 'greet_zaid'
     ]);
+
+    // ─── Entry State Machine (before greeting so entry flow isn't interrupted) ──
+    if (entryState.has(chatId)) {
+      const state = entryState.get(chatId);
+      const handled = await processEntryStep(chatId, sock, state, text);
+      if (handled) return;
+      entryState.delete(chatId); // Unknown state, clean up
+    }
 
     // ─── Greeting Button Handlers ───────────────────────────────────
     if (cmd === 'greet_ai') {
@@ -1321,6 +1515,7 @@ async function startBot() {
                 { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧪 Samples', id: 'zaid_samples' }) },
                 { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '💰 Wallet', id: 'zaid_wallet' }) },
                 { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '🧾 Bills', id: 'zaid_bills' }) },
+                { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '➕ Entry', id: 'zaid_entry' }) },
                 { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '❓ Help', id: 'help' }) },
               ]
             });
@@ -1396,6 +1591,12 @@ async function startBot() {
         } else {
           await sock.sendMessage(chatId, { text: '🧾 *Bills dates:*\n' + dates.join('\n') });
         }
+      }
+
+      // ─── Entry Flow (zaid_entry / .entry) ───────────────────────────────
+      if (cmd === 'zaid_entry' || cmd === 'entry') {
+        entryState.set(chatId, { step: 'await_password', data: {}, token: null });
+        await sock.sendMessage(chatId, { text: '🔐 Entry karne ke liye admin panel ka password bhejo:' });
       }
 
       // ─── Bill date selected → format buttons ─────────────────────────
@@ -1571,6 +1772,62 @@ async function startBot() {
         try {
           log('[AI] Chat fallback for: ' + text.substring(0, 50));
           const lowerText = text.toLowerCase();
+
+          // ─── AI Natural Language Entry Detection ──────────────────
+          const entryKeywords = ['entry kar', 'add kar', 'new entry', 'nayi entry', 'entry karni',
+            'item add', 'clipping add', 'wallet add', 'sample add', 'likh do entry',
+            'entry ban', 'entry bana', 'darj kar', 'save kar'];
+          const isEntryRequest = entryKeywords.some(kw => lowerText.includes(kw));
+
+          if (isEntryRequest) {
+            // Use AI to extract structured data from the message
+            const extractPrompt = text + '\n\nExtract entry data from this message. Return ONLY a JSON object with these possible fields: {"password": "if mentioned", "category": "items|clipping|wallet|samples", "name": "item name", "number": "serial", "person": "person name", "quantity": number, "model": "model", "type": "in|out", "clipperName": "name", "size": "yards", "personOrPurpose": "purpose", "amount": number, "personName": "name", "pieces": "count", "program": "name"}. If a field is not mentioned, omit it. Return ONLY the JSON, no explanation.';
+            try {
+              const extractUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
+                encodeURIComponent(extractPrompt) + '&model=gpt-4o&system=' +
+                encodeURIComponent('You are a data extraction assistant. Return ONLY valid JSON. No explanation, no markdown, just the JSON object.');
+              const extractRes = await fetch(extractUrl);
+              const extractData = await extractRes.json();
+              if (extractData.success && extractData.data?.choices?.[0]?.message?.content) {
+                let jsonStr = extractData.data.choices[0].message.content.trim();
+                jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '').replace(/^{\s*/g, '{').replace(/\s*}$/g, '}');
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.password && parsed.category) {
+                  const token = await botAuthenticate(parsed.password);
+                  if (!token) {
+                    await sock.sendMessage(chatId, { text: 'Yaar password galat hai. Dobarah sahi password bhejo 🔐' });
+                    return;
+                  }
+                  const cat = parsed.category;
+                  if (cat === 'items' && parsed.name) {
+                    const result = await botCreateEntry('items', token, { name: parsed.name, number: parsed.number || '', person: parsed.person || '', quantity: parsed.quantity || 1, model: parsed.model || '', status: 'available' });
+                    if (result.error) { await sock.sendMessage(chatId, { text: '❌ Entry fail: ' + result.error }); }
+                    else { await sock.sendMessage(chatId, { text: '✅ *Item entry ho gayi AI se!*\n📦 ' + parsed.name + (parsed.number ? '\n🔢 Serial: ' + parsed.number : '') + (parsed.person ? '\n👤 Person: ' + parsed.person : '') + '\n📦 Qty: ' + (parsed.quantity || 1) + (parsed.model ? '\n📐 Model: ' + parsed.model : '') + '\n\nZabardast! AI ne seedha entry kar di 💪' }); }
+                  } else if (cat === 'clipping' && parsed.clipperName) {
+                    const result = await botCreateEntry('clipping', token, { type: parsed.type || 'in', clipperName: parsed.clipperName, size: parsed.size || '' });
+                    if (result.error) { await sock.sendMessage(chatId, { text: '❌ Entry fail: ' + result.error }); }
+                    else { await sock.sendMessage(chatId, { text: '✅ *Clipping entry ho gayi!*\n✂️ ' + parsed.clipperName + '\n📏 Size: ' + (parsed.size || 'N/A') + ' yards\n\nBilkul set! 👍' }); }
+                  } else if (cat === 'wallet' && parsed.amount) {
+                    const result = await botCreateEntry('wallet', token, { type: parsed.type || 'in', personOrPurpose: parsed.personOrPurpose || parsed.person || '', amount: parsed.amount });
+                    if (result.error) { await sock.sendMessage(chatId, { text: '❌ Entry fail: ' + result.error }); }
+                    else { await sock.sendMessage(chatId, { text: '✅ *Wallet entry ho gayi!*\n💰 Rs. ' + Number(parsed.amount).toLocaleString() + '\n👤 ' + (parsed.personOrPurpose || parsed.person || '') + '\n\nHisab barabar! 💪' }); }
+                  } else if (cat === 'samples' && parsed.personName) {
+                    const result = await botCreateEntry('samples', token, { type: parsed.type || 'in', personName: parsed.personName, pieces: parsed.pieces || '', program: parsed.program || '' });
+                    if (result.error) { await sock.sendMessage(chatId, { text: '❌ Entry fail: ' + result.error }); }
+                    else { await sock.sendMessage(chatId, { text: '✅ *Sample entry ho gayi!*\n🧪 ' + parsed.personName + (parsed.pieces ? '\n🔢 Pieces: ' + parsed.pieces : '') + (parsed.program ? '\n📋 Program: ' + parsed.program : '') + '\n\nFull power! 💪' }); }
+                  } else {
+                    await sock.sendMessage(chatId, { text: 'Yaar entry ke liye poori detail chahiye. .entry likho aur step by step batao 🙏' });
+                  }
+                  return;
+                } else if (parsed.category && !parsed.password) {
+                  await sock.sendMessage(chatId, { text: 'Entry karne ke liye password bhi bhejna hoga yaar. .entry likho aur step by step karo 🔐' });
+                  return;
+                }
+              }
+            } catch (extractErr) {
+              log('[AI-ENTRY] Extract error: ' + extractErr.message);
+            }
+          }
 
           // Detect if asking about items/entries/data
           const dataKeywords = ['item', 'thread', 'stock', 'available', 'availability', 'kitna', 'kitny', 'kitne',
