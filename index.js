@@ -1835,24 +1835,60 @@ async function startBot() {
             'bill', 'sample', 'clipping', 'person', 'maintenance', 'kaam', 'entry', 'entries',
             'serial', 'number', 'model', 'qty', 'quantity', 'status', 'detail', 'data', 'maal',
             'kahan', 'kahaan', 'kab', 'kis ko', 'kisko', 'kitna hai', 'kitnay', 'kitne hain',
-            'kis ne', 'kis laya', 'laaya', 'size', 'yard', 'piece', 'program', 'salary', 'total'];
-          const isDataQuery = dataKeywords.some(kw => lowerText.includes(kw));
+            'kis ne', 'kis laya', 'laaya', 'size', 'yard', 'piece', 'program', 'salary', 'total',
+            'aaj', 'kal', 'today', 'yesterday', 'date', 'din', 'mahina', 'month'];
+          let isDataQuery = dataKeywords.some(kw => lowerText.includes(kw));
           let dataContext = '';
+
+          // Always fetch items+person first to detect person names and serial numbers
+          const [items, wallet, bills, samples, clipping, person] = await Promise.all([
+            fetchStockData('items').catch(() => []),
+            fetchStockData('wallet').catch(() => []),
+            fetchStockData('bills').catch(() => []),
+            fetchStockData('samples').catch(() => []),
+            fetchStockData('clipping').catch(() => []),
+            fetchStockData('person').catch(() => [])
+          ]);
+
+          // Check if message mentions a known person name (from items/person/bills/samples/clipping)
+          if (!isDataQuery) {
+            const knownPersons = new Set();
+            items.forEach(i => { if (i.person) knownPersons.add(i.person.toLowerCase()); });
+            person.forEach(p => { if (p.personName) knownPersons.add(p.personName.toLowerCase()); });
+            bills.forEach(b => { if (b.personName) knownPersons.add(b.personName.toLowerCase()); });
+            samples.forEach(s => { if (s.personName) knownPersons.add(s.personName.toLowerCase()); });
+            clipping.forEach(c => { if (c.clipperName) knownPersons.add(c.clipperName.toLowerCase()); });
+            wallet.forEach(w => { if (w.personOrPurpose) knownPersons.add(w.personOrPurpose.toLowerCase()); });
+            // Check if user typed any known person name
+            for (const pname of knownPersons) {
+              if (pname.length >= 2 && lowerText.includes(pname)) { isDataQuery = true; break; }
+            }
+          }
+
+          // Check if message mentions a serial/thread number from items
+          if (!isDataQuery) {
+            for (const item of items) {
+              if (item.number && item.number.length >= 2 && lowerText.includes(item.number.toLowerCase())) {
+                isDataQuery = true; break;
+              }
+            }
+          }
+
+          // Check for date patterns (e.g. "5 june", "12 may", DD/MM, month names)
+          if (!isDataQuery) {
+            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+              'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+            if (months.some(m => lowerText.includes(m)) || /\d{1,2}[\/\-]\d{1,2}/.test(text)) {
+              isDataQuery = true;
+            }
+          }
 
           if (isDataQuery) {
             try {
-              const [items, wallet, bills, samples, clipping, person] = await Promise.all([
-                fetchStockData('items').catch(() => []),
-                fetchStockData('wallet').catch(() => []),
-                fetchStockData('bills').catch(() => []),
-                fetchStockData('samples').catch(() => []),
-                fetchStockData('clipping').catch(() => []),
-                fetchStockData('person').catch(() => [])
-              ]);
               const summary = [];
               if (items.length) {
                 const itemsList = items.map(i => {
-                  const dt = i.timestamp ? new Date(i.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  const dt = i.timestamp ? new Date(i.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
                   return i.name + ' | Serial:' + (i.number || 'N/A') + ' | Person:' + (i.person || 'N/A') + ' | Model:' + (i.model || 'N/A') + ' | Qty:' + (i.quantity || 1) + ' | Status:' + (i.status || 'available') + ' | Date:' + dt;
                 }).join('\n  ');
                 summary.push('ITEMS (' + items.length + ' total):\n  ' + itemsList);
@@ -1860,8 +1896,8 @@ async function startBot() {
               if (wallet.length) {
                 const totalIn = wallet.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
                 const totalOut = wallet.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-                const recentWallet = wallet.slice(0, 10).map(w => {
-                  const dt = w.timestamp ? new Date(w.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                const recentWallet = wallet.slice(0, 15).map(w => {
+                  const dt = w.timestamp ? new Date(w.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
                   return (w.type === 'in' ? 'IN' : 'OUT') + ' Rs.' + (Number(w.amount)||0) + ' ' + (w.personOrPurpose||'') + ' Date:' + dt;
                 }).join('; ');
                 summary.push('WALLET: In Rs.' + totalIn + ', Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut) + '. Recent: ' + recentWallet);
@@ -1872,21 +1908,21 @@ async function startBot() {
               }
               if (samples.length) {
                 const samplesList = samples.map(s => {
-                  const dt = s.timestamp ? new Date(s.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  const dt = s.timestamp ? new Date(s.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
                   return (s.personName||'') + ' Program:' + (s.program||'') + ' Pieces:' + (s.pieces||'') + ' Type:' + (s.type||'') + ' Date:' + dt;
                 }).join('; ');
                 summary.push('SAMPLES (' + samples.length + '): ' + samplesList);
               }
               if (clipping.length) {
                 const clipList = clipping.map(c => {
-                  const dt = c.timestamp ? new Date(c.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  const dt = c.timestamp ? new Date(c.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
                   return (c.clipperName||'') + ' Size:' + (c.size||'') + 'yds Type:' + (c.type||'') + ' Date:' + dt;
                 }).join('; ');
                 summary.push('CLIPPING (' + clipping.length + '): ' + clipList);
               }
               if (person.length) {
-                const personList = person.slice(0, 10).map(p => {
-                  const dt = p.timestamp ? new Date(p.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                const personList = person.slice(0, 15).map(p => {
+                  const dt = p.timestamp ? new Date(p.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
                   return (p.personName||'') + ' Action:' + (p.action||'') + ' Date:' + dt;
                 }).join('; ');
                 summary.push('PERSON/ATTENDANCE (' + person.length + '): ' + personList);
@@ -1895,7 +1931,7 @@ async function startBot() {
             } catch (_) {}
           }
 
-          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang. IMPORTANT: When answering about items/stock, ALWAYS mention specific details: thread name, serial number, quantity, model number, person name (who brought/handed the item), date when item came, and status. When answering about clipping, mention clipper name, size in yards, and date. When answering about samples, mention person, program, pieces count, and date. When answering about wallet, mention exact amounts. Never give vague answers - always provide exact quantities, serial numbers, names, dates and sizes from the data provided. Keep responses short (2-5 sentences), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.' + dataContext;
+          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang. IMPORTANT RESPONSE RULES: 1) If user asks about a PERSON NAME: show ALL items, entries, wallet transactions, samples, and clipping associated with that person - include thread names, serial numbers, quantities, models, dates, sizes, amounts. 2) If user asks about a SPECIFIC DATE: show ALL entries/items/transactions from that date across all categories. 3) If user types a SERIAL/THREAD NUMBER: show that item\'s complete details - name, serial, person who brought it, quantity, model number, date, status. 4) When answering about items/stock, ALWAYS mention: thread name, serial number, quantity, model number, person name (who brought/handed), date, and status. 5) For clipping: clipper name, size in yards, type, date. 6) For samples: person, program, pieces, date. 7) For wallet: exact amounts and dates. Never give vague answers - always provide exact quantities, serial numbers, names, dates and sizes from the data. Keep responses short (3-6 sentences), heartfelt and warm. No English, no Devanagari/Urdu script, no markdown tables. Use WhatsApp-suitable formatting.' + dataContext;
 
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
             encodeURIComponent(text) + '&model=gpt-4o&system=' + encodeURIComponent(systemPrompt);
