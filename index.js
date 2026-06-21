@@ -1829,41 +1829,42 @@ async function startBot() {
             }
           }
 
-          // ─── Bill Image/Pic Request Detection ─────────────────────
-          const billPicKeywords = ['bill', 'bills', 'bill ki', 'bill ka', 'bill ki pic', 'bill ki image',
-            'bill bhejo', 'bill dikha', 'bill bhej', 'bill dikhao', 'bill ki photo', 'bill ka image',
-            'bill ki picture', 'bill bhaij', 'bill ki tasveer', 'hisab', 'kharcha', 'kharchay'];
-          const isBillPicRequest = billPicKeywords.some(kw => lowerText.includes(kw)) &&
-            (lowerText.includes('pic') || lowerText.includes('image') || lowerText.includes('photo') ||
-             lowerText.includes('picture') || lowerText.includes('bhejo') || lowerText.includes('bhej') ||
-             lowerText.includes('dikha') || lowerText.includes('dikhao') || lowerText.includes('tasveer') ||
-             lowerText.includes('send') || lowerText.includes('show') || lowerText.includes('snap'));
+          // ─── Bill Request Detection (any form: bill, bil, bills, hisab, etc.) ───
+          const billKeywords = ['bill', 'bills', 'bil', 'bille', 'bill ka', 'bill ki', 'bill k',
+            'hisab', 'kharcha', 'kharchay', 'kharche', 'bills dikha', 'bills bhejo',
+            'bills bhej', 'bill bhaij', 'bill dikhao', 'bill ki pic', 'bill ki image',
+            'bill ki photo', 'bill ki tasveer', 'wala bill', 'wala bil', 'ka bill', 'ka bil',
+            'k bill', 'k bil', 'ke bill', 'ke bil'];
+          const isBillRequest = billKeywords.some(kw => lowerText.includes(kw));
 
-          if (isBillPicRequest) {
+          if (isBillRequest) {
             try {
               // Use AI to extract date from the message
-              const dateExtractPrompt = text + '\n\nExtract the date mentioned in this message. Return ONLY a date in YYYY-MM-DD format. If no specific date, return today\'s date in YYYY-MM-DD format. No explanation, just the date.';
+              const dateExtractPrompt = 'User message: "' + text + '"\n\nExtract the date mentioned. Return ONLY YYYY-MM-DD. If the message says "aaj"/"today" return today. If "kal"/"yesterday" return yesterday. If a specific date like "6 june" return that date. If NO date is mentioned at all, return exactly "NO_DATE". No explanation.';
               const dateUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
                 encodeURIComponent(dateExtractPrompt) + '&model=gpt-4o&system=' +
-                encodeURIComponent('You extract dates from messages. Return ONLY YYYY-MM-DD format. No explanation. Today is ' + new Date().toISOString().slice(0, 10) + '.');
+                encodeURIComponent('You extract dates from WhatsApp messages. Return ONLY YYYY-MM-DD or "NO_DATE" if no date is mentioned. Today is ' + new Date().toISOString().slice(0, 10) + '. No explanation.');
               const dateRes = await fetch(dateUrl);
               const dateData = await dateRes.json();
               if (dateData.success && dateData.data?.choices?.[0]?.message?.content) {
-                let extractedDate = dateData.data.choices[0].message.content.trim().replace(/[^0-9\-]/g, '');
-                // Validate date format
+                let extractedDate = dateData.data.choices[0].message.content.trim().replace(/[^0-9\-A-Z_a-z]/g, '');
+
+                // If a specific date was found
                 if (/^\d{4}-\d{2}-\d{2}$/.test(extractedDate)) {
                   const billsData = await fetchStockData('bills');
                   const dateBills = billsData.filter(b =>
                     (b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : '')) === extractedDate
                   );
                   if (dateBills.length) {
-                    await sock.sendMessage(chatId, { text: '🖼️ ' + extractedDate + ' k bill ki pic bhej raha hoon yaar...' });
+                    const dt = new Date(extractedDate + 'T00:00:00');
+                    const dateLabel = dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' });
+                    await sock.sendMessage(chatId, { text: '🖼️ ' + dateLabel + ' k bills bhej raha hoon yaar...' });
                     try {
                       const imgBuf = await generateBillImage(dateBills, extractedDate);
                       const total = dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
                       await sock.sendMessage(chatId, {
                         image: imgBuf,
-                        caption: '🧾 *BILLS — ' + extractedDate + '*\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
+                        caption: '🧾 *BILLS — ' + dateLabel + '*\n📦 ' + dateBills.length + ' bills\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
                       });
                     } catch (imgErr) {
                       log('[AI-BILL] Image error: ' + imgErr.message);
@@ -1871,6 +1872,31 @@ async function startBot() {
                     }
                   } else {
                     await sock.sendMessage(chatId, { text: 'Yaar ' + extractedDate + ' ko koi bill nahi hai, koi aur date batao 🙏' });
+                  }
+                  return;
+
+                } else {
+                  // No specific date found → send date buttons
+                  const billsData = await fetchStockData('bills');
+                  const dates = [...new Set(billsData.map(b =>
+                    b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : null)
+                  ).filter(Boolean))].sort().reverse();
+
+                  if (dates.length > 0 && sendButtons) {
+                    const dateButtons = dates.slice(0, 8).map(d => {
+                      const dt = new Date(d + 'T00:00:00');
+                      const label = dt.toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
+                      return { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: '📅 ' + label, id: 'bill_img_' + d }) };
+                    });
+                    await sendButtons(sock, chatId, {
+                      text: '🧾 *Bills*\n\nYaar date batao, konsay din k bills chahiye? Tap karo:',
+                      footer: BOT_NAME,
+                      buttons: dateButtons
+                    });
+                  } else if (dates.length > 0) {
+                    await sock.sendMessage(chatId, { text: '🧾 *Bills available dates:*\n' + dates.slice(0, 10).join('\n') + '\n\nKonsi date ka bill chahiye?' });
+                  } else {
+                    await sock.sendMessage(chatId, { text: 'Yaar abhi koi bills nahi hain 🙏' });
                   }
                   return;
                 }
