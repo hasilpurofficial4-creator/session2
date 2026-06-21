@@ -838,14 +838,13 @@ async function startBot() {
         const transcribeData = await transcribeRes.json();
         const transcribed = transcribeData.result || transcribeData.text || transcribeData.transcription || transcribeData.data?.text || '';
         if (!transcribed) {
-          await sock.sendMessage(chatId, { text: 'Yaar voice samajh nahi aayi, dobara bhej ya text kar de 🙏' });
+          await sock.sendMessage(chatId, { text: 'Shor ki waja se samajh nahi aayi yaar, text bhej do dost g 🙏' });
           return;
         }
-        await sock.sendMessage(chatId, { text: '📝 *Tumne kaha:* ' + transcribed });
         text = transcribed;
       } catch (audioErr) {
         log('[AUDIO] Transcription error: ' + audioErr.message);
-        await sock.sendMessage(chatId, { text: 'Voice transcribe nahi ho payi yaar, text bhej do 🙏' });
+        await sock.sendMessage(chatId, { text: 'Shor ki waja se samajh nahi aayi yaar, text bhej do dost g 🙏' });
         return;
       }
     }
