@@ -1829,6 +1829,57 @@ async function startBot() {
             }
           }
 
+          // ─── Bill Image/Pic Request Detection ─────────────────────
+          const billPicKeywords = ['bill', 'bills', 'bill ki', 'bill ka', 'bill ki pic', 'bill ki image',
+            'bill bhejo', 'bill dikha', 'bill bhej', 'bill dikhao', 'bill ki photo', 'bill ka image',
+            'bill ki picture', 'bill bhaij', 'bill ki tasveer', 'hisab', 'kharcha', 'kharchay'];
+          const isBillPicRequest = billPicKeywords.some(kw => lowerText.includes(kw)) &&
+            (lowerText.includes('pic') || lowerText.includes('image') || lowerText.includes('photo') ||
+             lowerText.includes('picture') || lowerText.includes('bhejo') || lowerText.includes('bhej') ||
+             lowerText.includes('dikha') || lowerText.includes('dikhao') || lowerText.includes('tasveer') ||
+             lowerText.includes('send') || lowerText.includes('show') || lowerText.includes('snap'));
+
+          if (isBillPicRequest) {
+            try {
+              // Use AI to extract date from the message
+              const dateExtractPrompt = text + '\n\nExtract the date mentioned in this message. Return ONLY a date in YYYY-MM-DD format. If no specific date, return today\'s date in YYYY-MM-DD format. No explanation, just the date.';
+              const dateUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
+                encodeURIComponent(dateExtractPrompt) + '&model=gpt-4o&system=' +
+                encodeURIComponent('You extract dates from messages. Return ONLY YYYY-MM-DD format. No explanation. Today is ' + new Date().toISOString().slice(0, 10) + '.');
+              const dateRes = await fetch(dateUrl);
+              const dateData = await dateRes.json();
+              if (dateData.success && dateData.data?.choices?.[0]?.message?.content) {
+                let extractedDate = dateData.data.choices[0].message.content.trim().replace(/[^0-9\-]/g, '');
+                // Validate date format
+                if (/^\d{4}-\d{2}-\d{2}$/.test(extractedDate)) {
+                  const billsData = await fetchStockData('bills');
+                  const dateBills = billsData.filter(b =>
+                    (b.date || (b.timestamp ? new Date(b.timestamp).toISOString().slice(0, 10) : '')) === extractedDate
+                  );
+                  if (dateBills.length) {
+                    await sock.sendMessage(chatId, { text: '🖼️ ' + extractedDate + ' k bill ki pic bhej raha hoon yaar...' });
+                    try {
+                      const imgBuf = await generateBillImage(dateBills, extractedDate);
+                      const total = dateBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+                      await sock.sendMessage(chatId, {
+                        image: imgBuf,
+                        caption: '🧾 *BILLS — ' + extractedDate + '*\n💰 Rs. ' + total.toLocaleString() + '\n🏢 ' + BOT_NAME + CAPTION_FOOTER
+                      });
+                    } catch (imgErr) {
+                      log('[AI-BILL] Image error: ' + imgErr.message);
+                      await sock.sendMessage(chatId, { text: '⚠️ Pic nahi ban payi yaar, text mein bhej raha hoon:\n\n' + formatBillsText(dateBills, extractedDate) });
+                    }
+                  } else {
+                    await sock.sendMessage(chatId, { text: 'Yaar ' + extractedDate + ' ko koi bill nahi hai, koi aur date batao 🙏' });
+                  }
+                  return;
+                }
+              }
+            } catch (billErr) {
+              log('[AI-BILL] Error: ' + billErr.message);
+            }
+          }
+
           // Detect if asking about items/entries/data
           const dataKeywords = ['item', 'thread', 'stock', 'available', 'availability', 'kitna', 'kitny', 'kitne',
             'kya hai', 'kya h', 'milay ga', 'milega', 'hay', 'hai kya', 'wallet', 'paise', 'paisa',
