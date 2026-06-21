@@ -1487,7 +1487,7 @@ async function startBot() {
           log('[AI] Chat fallback for: ' + text.substring(0, 50));
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
             encodeURIComponent(text) + '&model=gpt-4o&system=' +
-            encodeURIComponent('You are a helpful, friendly assistant for a unit stock management business. Respond in the same language the user writes in. Keep responses short (2-4 sentences max), heartfelt, warm and intelligent. Do not use markdown tables. Use minimal formatting suitable for WhatsApp messages.');
+            encodeURIComponent('You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang like people actually talk on WhatsApp (e.g. yaar, bhai, scene on hai, full power, zabardast, chill maro, bindaas). Not joking around, just naturally fun and casual tone. Keep responses short (2-4 sentences max), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.');
           const aiRes = await fetch(aiUrl);
           const aiData = await aiRes.json();
           if (aiData.success && aiData.data?.choices?.[0]?.message?.content) {
