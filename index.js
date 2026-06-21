@@ -48,6 +48,21 @@ let botRunning = false;
 let sockRef = null;
 let sentCount = 0;
 let botLogs = [];
+
+// ─── Pakistani Time (UTC+5) Helpers ───────────────────────────────────
+function getPkDate() {
+  return new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function getPkMidnightTs() {
+  const d = new Date(Date.now() + 5 * 60 * 60 * 1000);
+  d.setUTCHours(24, 0, 0, 0);
+  return d.getTime() - 5 * 60 * 60 * 1000;
+}
+
+// ─── Greeting / Mute State ──────────────────────────────────────────
+const greetedToday = new Map();   // chatId → date string (PKT)
+const mutedUsers  = new Map();    // chatId → mute expiry timestamp (UTC ms)
+const aiActive    = new Map();    // chatId → true (AI mode active for the day)
 function log(msg) {
   const line = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
   console.log(line);
@@ -811,6 +826,52 @@ async function startBot() {
         || '';
     }
 
+    // ─── Greeting Button Handlers ───────────────────────────────────
+    if (cmd === 'greet_ai') {
+      aiActive.set(chatId, true);
+      greetedToday.set(chatId, getPkDate());
+      mutedUsers.delete(chatId);
+      await sock.sendMessage(chatId, { text: 'Bilkul yaar! Main hazir hoon, poochho kya jaanna chahte ho? 🤖' });
+      return;
+    }
+    if (cmd === 'greet_zaid') {
+      const muteTs = getPkMidnightTs();
+      mutedUsers.set(chatId, muteTs);
+      greetedToday.set(chatId, getPkDate());
+      aiActive.delete(chatId);
+      await sock.sendMessage(chatId, { text: 'Theek hai bhai, Zaid khud jawab dega jab free hoga 👍' });
+      return;
+    }
+
+    // ─── Mute Check ─────────────────────────────────────────────────
+    if (mutedUsers.has(chatId)) {
+      if (Date.now() < mutedUsers.get(chatId)) return; // Still muted
+      mutedUsers.delete(chatId); // Mute expired
+      aiActive.delete(chatId);
+    }
+
+    // ─── Daily Greeting (first msg / new day) ───────────────────────
+    const todayPk = getPkDate();
+    const alreadyGreeted = greetedToday.get(chatId) === todayPk;
+    const hasDotPrefix = /^[./!#]/.test(text.trim());
+
+    if (!alreadyGreeted && !hasDotPrefix) {
+      greetedToday.set(chatId, todayPk);
+      if (sendButtons) {
+        await sendButtons(sock, chatId, {
+          text: 'Assalam o Alaikum!!! 👋\n\nZaid abhi kisi zaroori kaam main busy ho sakta hai. Agar apko unit k related kaam ki maloomat chahye to main ap ki har baat ka jawab dy sakta hoon 🤖',
+          footer: BOT_NAME,
+          buttons: [
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'G Shukriya ✅', id: 'greet_ai' }) },
+            { name: 'quick_reply', buttonParamsJson: JSON.stringify({ display_text: 'Nahi Zaid Jawab Dy ❌', id: 'greet_zaid' }) },
+          ]
+        });
+      } else {
+        await sock.sendMessage(chatId, { text: 'Assalam o Alaikum! Reply: 1 = AI se baat karein, 2 = Zaid ka jawab ka intezar karein' });
+      }
+      return;
+    }
+
     if (!text || text.trim().length < 1) return;
 
     // Strip ALL leading symbols (., /, !, #, *, etc.) so .items /items !items items all work
@@ -826,7 +887,8 @@ async function startBot() {
       'samples', 'samples2', 'clipping', 'clipping2',
       'bills', 'bills2', 'tilla',
       'zaid', 'zaid_items', 'zaid_clipping', 'zaid_samples',
-      'zaid_wallet', 'zaid_bills'
+      'zaid_wallet', 'zaid_bills',
+      'greet_ai', 'greet_zaid'
     ]);
 
     try {
@@ -1485,9 +1547,44 @@ async function startBot() {
       if (!isKnownCmd && text.trim().length >= 2) {
         try {
           log('[AI] Chat fallback for: ' + text.substring(0, 50));
+          const lowerText = text.toLowerCase();
+
+          // Detect if asking about items/entries/data
+          const dataKeywords = ['item', 'thread', 'stock', 'available', 'availability', 'kitna', 'kitny', 'kitne',
+            'kya hai', 'kya h', 'milay ga', 'milega', 'hay', 'hai kya', 'wallet', 'paise', 'paisa',
+            'bill', 'sample', 'clipping', 'person', 'maintenance', 'kaam', 'entry', 'entries',
+            'serial', 'number', 'model', 'qty', 'quantity', 'status', 'detail', 'data', 'maal',
+            'kahan', 'kahaan', 'kab', 'kis ko', 'kisko', 'kitna hai', 'kitnay', 'kitne hain'];
+          const isDataQuery = dataKeywords.some(kw => lowerText.includes(kw));
+          let dataContext = '';
+
+          if (isDataQuery) {
+            try {
+              const [items, wallet, bills, samples, clipping] = await Promise.all([
+                fetchStockData('items').catch(() => []),
+                fetchStockData('wallet').catch(() => []),
+                fetchStockData('bills').catch(() => []),
+                fetchStockData('samples').catch(() => []),
+                fetchStockData('clipping').catch(() => [])
+              ]);
+              const summary = [];
+              if (items.length) summary.push('ITEMS: ' + items.length + ' entries. Latest 5: ' + items.slice(0, 5).map(i => i.name + '(Serial:' + (i.number || 'N/A') + ', Person:' + (i.person || 'N/A') + ', Model:' + (i.model || 'N/A') + ', Qty:' + (i.quantity || 1) + ', Status:' + (i.status || 'available')).join('; '));
+              if (wallet.length) {
+                const totalIn = wallet.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
+                const totalOut = wallet.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
+                summary.push('WALLET: Total In Rs.' + totalIn + ', Total Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut));
+              }
+              if (bills.length) summary.push('BILLS: ' + bills.length + ' bills, total Rs.' + bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0));
+              if (samples.length) summary.push('SAMPLES: ' + samples.length + ' entries');
+              if (clipping.length) summary.push('CLIPPING: ' + clipping.length + ' entries');
+              dataContext = '\n\nCURRENT STOCK DATA: ' + summary.join(' | ');
+            } catch (_) {}
+          }
+
+          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang like people actually talk on WhatsApp (e.g. yaar, bhai, scene on hai, full power, zabardast, chill maro, bindaas). Not joking around, just naturally fun and casual tone. Keep responses short (2-4 sentences max), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.' + dataContext;
+
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
-            encodeURIComponent(text) + '&model=gpt-4o&system=' +
-            encodeURIComponent('You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang like people actually talk on WhatsApp (e.g. yaar, bhai, scene on hai, full power, zabardast, chill maro, bindaas). Not joking around, just naturally fun and casual tone. Keep responses short (2-4 sentences max), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.');
+            encodeURIComponent(text) + '&model=gpt-4o&system=' + encodeURIComponent(systemPrompt);
           const aiRes = await fetch(aiUrl);
           const aiData = await aiRes.json();
           if (aiData.success && aiData.data?.choices?.[0]?.message?.content) {
