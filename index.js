@@ -105,8 +105,8 @@ const LINE = '╔═════════════════════
 const DIV  = '╠══════════════════════════════════╣';
 const END  = '╚══════════════════════════════════╝';
 const THIN = '──────────────────────────────────';
-const FOOTER = '\n📱 Admin: +' + ADMIN_NUMBER;
-const CAPTION_FOOTER = '\n📱 Admin: +' + ADMIN_NUMBER;
+const FOOTER = '\n' + END + '\n🏢 *' + BOT_NAME + '*\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
+const CAPTION_FOOTER = '\n🌐 ' + SITE_URL + '\n📱 Admin: +' + ADMIN_NUMBER;
 
 // Unicode Mathematical Bold converter for cool headers
 function toBold(str) {
@@ -786,6 +786,7 @@ async function startBot() {
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0];
     if (!msg.message) return;
+    if (msg.key.fromMe) return; // Ignore bot's own messages
 
     const chatId = msg.key.remoteJid;
 
