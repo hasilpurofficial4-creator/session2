@@ -1012,16 +1012,62 @@ async function startBot() {
         || '';
     }
 
-    // ─── Audio / Voice Message Transcription ─────────────────────────
+    // ─── Audio / Voice Message Transcription (SpeechNotes API) ───────────────────
     if (msgType === 'audioMessage' || msg.message?.audioMessage) {
       try {
         await sock.sendMessage(chatId, { text: '🎙️ Voice sunn raha hoon yaar, ruk zara...' });
         const audioBuf = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
-        const formData = new FormData();
-        formData.append('audio', new Blob([audioBuf], { type: 'audio/ogg; codecs=opus' }), 'voice.ogg');
-        const transcribeRes = await fetch('https://apis.davidcyril.name.ng/tools/transcribe', { method: 'POST', body: formData });
-        const transcribeData = await transcribeRes.json();
-        const transcribed = transcribeData.result || transcribeData.text || transcribeData.transcription || transcribeData.data?.text || '';
+
+        // Step 1: Upload audio to temp hosting to get a URL
+        const audioBlob = new Blob([audioBuf], { type: 'audio/ogg; codecs=opus' });
+        const uploadForm = new FormData();
+        uploadForm.append('file', audioBlob, 'voice.ogg');
+        const uploadRes = await fetch('https://file.io', { method: 'POST', body: uploadForm });
+        const uploadData = await uploadRes.json();
+        if (!uploadData.link) throw new Error('Audio upload failed');
+        log('[AUDIO] Uploaded to: ' + uploadData.link);
+
+        // Step 2: Submit to SpeechNotes API
+        const speechCreds = Buffer.from('9qNnQ6ofCRdfJgy5CUDl77z7Ubo1:2u76aTQVb5').toString('base64');
+        const snRes = await fetch('https://api.speechnotes.co/Api_20250209_7get', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Basic ' + speechCreds,
+            'Content-Type': 'application/json; charset=utf-8'
+          },
+          body: JSON.stringify({
+            type: 'upload',
+            fileName: 'voice_' + Date.now(),
+            fileUrl: uploadData.link,
+            language: 'ur-PK',
+            numSpeakers: '1'
+          })
+        });
+        const snData = await snRes.json();
+        log('[AUDIO] SpeechNotes: ' + JSON.stringify(snData).substring(0, 300));
+
+        // Step 3: Get transcription (immediate or polling)
+        let transcribed = snData.result || snData.text || snData.transcription || snData.data?.text || '';
+
+        // If we got a job ID, poll for results
+        if (!transcribed && snData.id) {
+          for (let poll = 0; poll < 20; poll++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const pollRes = await fetch('https://api.speechnotes.co/Api_20250209_7get', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Basic ' + speechCreds,
+                'Content-Type': 'application/json; charset=utf-8'
+              },
+              body: JSON.stringify({ type: 'status', id: snData.id })
+            });
+            const pollData = await pollRes.json();
+            transcribed = pollData.result || pollData.text || pollData.transcription || pollData.data?.text || '';
+            if (transcribed || pollData.status === 'failed' || pollData.status === 'error') break;
+            log('[AUDIO] Polling... attempt ' + (poll + 1));
+          }
+        }
+
         if (!transcribed) {
           await sock.sendMessage(chatId, { text: 'Shor ki waja se samajh nahi aayi yaar, text bhej do dost g 🙏' });
           return;
