@@ -14,6 +14,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
+  downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const fs = require('fs');
@@ -826,6 +827,48 @@ async function startBot() {
         || '';
     }
 
+    // ─── Audio / Voice Message Transcription ─────────────────────────
+    if (msgType === 'audioMessage' || msg.message?.audioMessage) {
+      try {
+        await sock.sendMessage(chatId, { text: '🎙️ Voice sunn raha hoon yaar, ruk zara...' });
+        const audioBuf = await downloadMediaMessage(msg, 'buffer', {}, { reuploadRequest: sock.updateMediaMessage });
+        const formData = new FormData();
+        formData.append('audio', new Blob([audioBuf], { type: 'audio/ogg; codecs=opus' }), 'voice.ogg');
+        const transcribeRes = await fetch('https://apis.davidcyril.name.ng/tools/transcribe', { method: 'POST', body: formData });
+        const transcribeData = await transcribeRes.json();
+        const transcribed = transcribeData.result || transcribeData.text || transcribeData.transcription || transcribeData.data?.text || '';
+        if (!transcribed) {
+          await sock.sendMessage(chatId, { text: 'Yaar voice samajh nahi aayi, dobara bhej ya text kar de 🙏' });
+          return;
+        }
+        await sock.sendMessage(chatId, { text: '📝 *Tumne kaha:* ' + transcribed });
+        text = transcribed;
+      } catch (audioErr) {
+        log('[AUDIO] Transcription error: ' + audioErr.message);
+        await sock.sendMessage(chatId, { text: 'Voice transcribe nahi ho payi yaar, text bhej do 🙏' });
+        return;
+      }
+    }
+
+    if (!text || text.trim().length < 1) return;
+
+    // Strip ALL leading symbols (., /, !, #, *, etc.) so .items /items !items items all work
+    const stripped = text.trim().replace(/^[^a-zA-Z0-9]+/, '');
+    if (!stripped) return;
+    const parts = stripped.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+
+    const KNOWN_COMMANDS = new Set([
+      'ping', 'sendoutbox', 'status', 'stock', 'help',
+      'items', 'items2', 'wallet', 'wallet2', 'wallettxt',
+      'person', 'person2', 'maintenance', 'maintenance2',
+      'samples', 'samples2', 'clipping', 'clipping2',
+      'bills', 'bills2', 'tilla',
+      'zaid', 'zaid_items', 'zaid_clipping', 'zaid_samples',
+      'zaid_wallet', 'zaid_bills',
+      'greet_ai', 'greet_zaid'
+    ]);
+
     // ─── Greeting Button Handlers ───────────────────────────────────
     if (cmd === 'greet_ai') {
       aiActive.set(chatId, true);
@@ -871,25 +914,6 @@ async function startBot() {
       }
       return;
     }
-
-    if (!text || text.trim().length < 1) return;
-
-    // Strip ALL leading symbols (., /, !, #, *, etc.) so .items /items !items items all work
-    const stripped = text.trim().replace(/^[^a-zA-Z0-9]+/, '');
-    if (!stripped) return;
-    const parts = stripped.split(/\s+/);
-    const cmd = parts[0].toLowerCase();
-
-    const KNOWN_COMMANDS = new Set([
-      'ping', 'sendoutbox', 'status', 'stock', 'help',
-      'items', 'items2', 'wallet', 'wallet2', 'wallettxt',
-      'person', 'person2', 'maintenance', 'maintenance2',
-      'samples', 'samples2', 'clipping', 'clipping2',
-      'bills', 'bills2', 'tilla',
-      'zaid', 'zaid_items', 'zaid_clipping', 'zaid_samples',
-      'zaid_wallet', 'zaid_bills',
-      'greet_ai', 'greet_zaid'
-    ]);
 
     try {
       // .ping
