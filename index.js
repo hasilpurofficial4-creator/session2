@@ -1909,15 +1909,13 @@ async function startBot() {
           // Detect if asking about items/entries/data
           const dataKeywords = ['item', 'thread', 'stock', 'available', 'availability', 'kitna', 'kitny', 'kitne',
             'kya hai', 'kya h', 'milay ga', 'milega', 'hay', 'hai kya', 'wallet', 'paise', 'paisa',
-            'bill', 'sample', 'clipping', 'person', 'maintenance', 'kaam', 'entry', 'entries',
+            'sample', 'clipping', 'person', 'maintenance', 'kaam', 'entry', 'entries',
             'serial', 'number', 'model', 'qty', 'quantity', 'status', 'detail', 'data', 'maal',
             'kahan', 'kahaan', 'kab', 'kis ko', 'kisko', 'kitna hai', 'kitnay', 'kitne hain',
             'kis ne', 'kis laya', 'laaya', 'size', 'yard', 'piece', 'program', 'salary', 'total',
             'aaj', 'kal', 'today', 'yesterday', 'date', 'din', 'mahina', 'month'];
-          let isDataQuery = dataKeywords.some(kw => lowerText.includes(kw));
-          let dataContext = '';
 
-          // Always fetch all data first to detect person names and serial numbers
+          // Always fetch all data
           const [items, wallet, bills, samples, clipping, person, maintenance] = await Promise.all([
             fetchStockData('items').catch(() => []),
             fetchStockData('wallet').catch(() => []),
@@ -1928,122 +1926,86 @@ async function startBot() {
             fetchStockData('maintenance').catch(() => [])
           ]);
 
-          // Check if message mentions a known person name (from all sections)
-          if (!isDataQuery) {
-            const knownPersons = new Set();
-            items.forEach(i => { if (i.person) knownPersons.add(i.person.toLowerCase()); });
-            person.forEach(p => { if (p.personName) knownPersons.add(p.personName.toLowerCase()); });
-            bills.forEach(b => { if (b.personName) knownPersons.add(b.personName.toLowerCase()); });
-            samples.forEach(s => { if (s.personName) knownPersons.add(s.personName.toLowerCase()); });
-            clipping.forEach(c => { if (c.clipperName) knownPersons.add(c.clipperName.toLowerCase()); });
-            wallet.forEach(w => { if (w.personOrPurpose) knownPersons.add(w.personOrPurpose.toLowerCase()); });
-            for (const pname of knownPersons) {
-              if (pname.length >= 2 && lowerText.includes(pname)) { isDataQuery = true; break; }
-            }
+          // ─── ALWAYS run dashboard-style search against user's message ───
+          const query = lowerText;
+          const fmtDt = (ts) => ts ? new Date(ts).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
+
+          function searchSection(data, fieldKeys) {
+            return data.filter(entry =>
+              fieldKeys(entry).some(f => f && String(f).toLowerCase().includes(query))
+            );
           }
 
-          // Check if message mentions a serial/thread number from items
-          if (!isDataQuery) {
-            for (const item of items) {
-              if (item.number && item.number.length >= 2 && lowerText.includes(item.number.toLowerCase())) {
-                isDataQuery = true; break;
-              }
-            }
+          // Search each section using same field mapping as dashboard
+          const matchedItems = searchSection(items, e => [e.name, e.number, e.model, e.person, e.status]);
+          const matchedWallet = searchSection(wallet, e => [e.personOrPurpose, e.type, String(e.amount)]);
+          const matchedBills = searchSection(bills, e => [e.personName, e.billPurpose, String(e.totalAmount), e.date]);
+          const matchedSamples = searchSection(samples, e => [e.personName, e.program, e.pieces, e.type]);
+          const matchedClipping = searchSection(clipping, e => [e.clipperName, e.size, e.type]);
+          const matchedPerson = searchSection(person, e => [e.personName, e.action]);
+          const matchedMaint = searchSection(maintenance, e => [e.subject, e.description, e.category, e.status]);
+
+          const totalMatched = matchedItems.length + matchedWallet.length + matchedBills.length +
+            matchedSamples.length + matchedClipping.length + matchedPerson.length + matchedMaint.length;
+
+          const summary = [];
+
+          // Use matched entries if found, otherwise include all data as context
+          const useItems = totalMatched === 0 ? items : matchedItems;
+          const useWallet = totalMatched === 0 ? wallet.slice(0, 15) : matchedWallet;
+          const useBills = totalMatched === 0 ? bills.slice(0, 10) : matchedBills;
+          const useSamples = totalMatched === 0 ? samples : matchedSamples;
+          const useClipping = totalMatched === 0 ? clipping : matchedClipping;
+          const usePerson = totalMatched === 0 ? person.slice(0, 15) : matchedPerson;
+          const useMaint = totalMatched === 0 ? maintenance.slice(0, 10) : matchedMaint;
+
+          if (useItems.length) {
+            const itemsList = useItems.map(i =>
+              i.name + ' | Serial:' + (i.number || 'N/A') + ' | Person:' + (i.person || 'N/A') + ' | Model:' + (i.model || 'N/A') + ' | Qty:' + (i.quantity || 1) + ' | Status:' + (i.status || 'available') + ' | Date:' + fmtDt(i.timestamp)
+            ).join('\n  ');
+            summary.push('ITEMS (' + useItems.length + (totalMatched === 0 ? ' total' : ' matched') + '):\n  ' + itemsList);
           }
-
-          // Check for date patterns
-          if (!isDataQuery) {
-            const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
-              'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-            if (months.some(m => lowerText.includes(m)) || /\d{1,2}[\/\-]\d{1,2}/.test(text)) {
-              isDataQuery = true;
-            }
+          if (useWallet.length) {
+            const totalIn = useWallet.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
+            const totalOut = useWallet.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
+            const walletList = useWallet.map(w =>
+              (w.type === 'in' ? 'IN' : 'OUT') + ' Rs.' + (Number(w.amount)||0) + ' ' + (w.personOrPurpose||'') + ' Date:' + fmtDt(w.timestamp)
+            ).join('; ');
+            summary.push('WALLET (' + useWallet.length + '): In Rs.' + totalIn + ', Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut) + '. Entries: ' + walletList);
           }
-
-          if (isDataQuery) {
-            try {
-              // ─── Dashboard-style search: match user query against all fields per section ───
-              const query = lowerText;
-              const fmtDt = (ts) => ts ? new Date(ts).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
-
-              function searchSection(data, fieldKeys) {
-                return data.filter(entry =>
-                  fieldKeys(entry).some(f => f && String(f).toLowerCase().includes(query))
-                );
-              }
-
-              // Search each section using same field mapping as dashboard
-              const matchedItems = searchSection(items, e => [e.name, e.number, e.model, e.person, e.status]);
-              const matchedWallet = searchSection(wallet, e => [e.personOrPurpose, e.type, String(e.amount)]);
-              const matchedBills = searchSection(bills, e => [e.personName, e.billPurpose, String(e.totalAmount), e.date]);
-              const matchedSamples = searchSection(samples, e => [e.personName, e.program, e.pieces, e.type]);
-              const matchedClipping = searchSection(clipping, e => [e.clipperName, e.size, e.type]);
-              const matchedPerson = searchSection(person, e => [e.personName, e.action]);
-              const matchedMaint = searchSection(maintenance, e => [e.subject, e.description, e.category, e.status]);
-
-              const summary = [];
-
-              // If no specific matches, include all data (broad query)
-              const totalMatched = matchedItems.length + matchedWallet.length + matchedBills.length +
-                matchedSamples.length + matchedClipping.length + matchedPerson.length + matchedMaint.length;
-
-              const useItems = totalMatched === 0 ? items : matchedItems;
-              const useWallet = totalMatched === 0 ? wallet.slice(0, 15) : matchedWallet;
-              const useBills = totalMatched === 0 ? bills.slice(0, 10) : matchedBills;
-              const useSamples = totalMatched === 0 ? samples : matchedSamples;
-              const useClipping = totalMatched === 0 ? clipping : matchedClipping;
-              const usePerson = totalMatched === 0 ? person.slice(0, 15) : matchedPerson;
-              const useMaint = totalMatched === 0 ? maintenance.slice(0, 10) : matchedMaint;
-
-              if (useItems.length) {
-                const itemsList = useItems.map(i =>
-                  i.name + ' | Serial:' + (i.number || 'N/A') + ' | Person:' + (i.person || 'N/A') + ' | Model:' + (i.model || 'N/A') + ' | Qty:' + (i.quantity || 1) + ' | Status:' + (i.status || 'available') + ' | Date:' + fmtDt(i.timestamp)
-                ).join('\n  ');
-                summary.push('ITEMS (' + useItems.length + (totalMatched === 0 ? ' total' : ' matched') + '):\n  ' + itemsList);
-              }
-              if (useWallet.length) {
-                const totalIn = useWallet.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
-                const totalOut = useWallet.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-                const walletList = useWallet.map(w =>
-                  (w.type === 'in' ? 'IN' : 'OUT') + ' Rs.' + (Number(w.amount)||0) + ' ' + (w.personOrPurpose||'') + ' Date:' + fmtDt(w.timestamp)
-                ).join('; ');
-                summary.push('WALLET (' + useWallet.length + '): In Rs.' + totalIn + ', Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut) + '. Entries: ' + walletList);
-              }
-              if (useBills.length) {
-                const billsList = useBills.map(b =>
-                  b.personName + ' Purpose:' + (b.billPurpose||'') + ' Items:' + (Array.isArray(b.items) ? b.items.length : 0) + ' Total:Rs.' + (Number(b.totalAmount)||0) + ' Date:' + (b.date||'N/A')
-                ).join('; ');
-                summary.push('BILLS (' + useBills.length + ', Rs.' + useBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0) + '): ' + billsList);
-              }
-              if (useSamples.length) {
-                const samplesList = useSamples.map(s =>
-                  (s.personName||'') + ' Program:' + (s.program||'') + ' Pieces:' + (s.pieces||'') + ' Type:' + (s.type||'') + ' Date:' + fmtDt(s.timestamp)
-                ).join('; ');
-                summary.push('SAMPLES (' + useSamples.length + '): ' + samplesList);
-              }
-              if (useClipping.length) {
-                const clipList = useClipping.map(c =>
-                  (c.clipperName||'') + ' Size:' + (c.size||'') + 'yds Type:' + (c.type||'') + ' Date:' + fmtDt(c.timestamp)
-                ).join('; ');
-                summary.push('CLIPPING (' + useClipping.length + '): ' + clipList);
-              }
-              if (usePerson.length) {
-                const personList = usePerson.map(p =>
-                  (p.personName||'') + ' Action:' + (p.action||'') + ' Date:' + fmtDt(p.timestamp)
-                ).join('; ');
-                summary.push('PERSON/ATTENDANCE (' + usePerson.length + '): ' + personList);
-              }
-              if (useMaint.length) {
-                const maintList = useMaint.map(m =>
-                  (m.subject||'') + ' Cat:' + (m.category||'') + ' Status:' + (m.status||'') + ' Desc:' + ((m.description||'').substring(0, 50)) + ' Date:' + fmtDt(m.timestamp)
-                ).join('; ');
-                summary.push('MAINTENANCE (' + useMaint.length + '): ' + maintList);
-              }
-              dataContext = '\n\nSEARCH RESULTS (matched using dashboard search):\n' + summary.join('\n');
-            } catch (_) {}
+          if (useBills.length) {
+            const billsList = useBills.map(b =>
+              b.personName + ' Purpose:' + (b.billPurpose||'') + ' Items:' + (Array.isArray(b.items) ? b.items.length : 0) + ' Total:Rs.' + (Number(b.totalAmount)||0) + ' Date:' + (b.date||'N/A')
+            ).join('; ');
+            summary.push('BILLS (' + useBills.length + ', Rs.' + useBills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0) + '): ' + billsList);
           }
+          if (useSamples.length) {
+            const samplesList = useSamples.map(s =>
+              (s.personName||'') + ' Program:' + (s.program||'') + ' Pieces:' + (s.pieces||'') + ' Type:' + (s.type||'') + ' Date:' + fmtDt(s.timestamp)
+            ).join('; ');
+            summary.push('SAMPLES (' + useSamples.length + '): ' + samplesList);
+          }
+          if (useClipping.length) {
+            const clipList = useClipping.map(c =>
+              (c.clipperName||'') + ' Size:' + (c.size||'') + 'yds Type:' + (c.type||'') + ' Date:' + fmtDt(c.timestamp)
+            ).join('; ');
+            summary.push('CLIPPING (' + useClipping.length + '): ' + clipList);
+          }
+          if (usePerson.length) {
+            const personList = usePerson.map(p =>
+              (p.personName||'') + ' Action:' + (p.action||'') + ' Date:' + fmtDt(p.timestamp)
+            ).join('; ');
+            summary.push('PERSON/ATTENDANCE (' + usePerson.length + '): ' + personList);
+          }
+          if (useMaint.length) {
+            const maintList = useMaint.map(m =>
+              (m.subject||'') + ' Cat:' + (m.category||'') + ' Status:' + (m.status||'') + ' Desc:' + ((m.description||'').substring(0, 50)) + ' Date:' + fmtDt(m.timestamp)
+            ).join('; ');
+            summary.push('MAINTENANCE (' + useMaint.length + '): ' + maintList);
+          }
+          dataContext = '\n\nSEARCH RESULTS' + (totalMatched > 0 ? ' (' + totalMatched + ' matches for "' + text.trim() + '"):' : ' (all data - no specific match):') + '\n' + summary.join('\n');
 
-          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang. The SEARCH RESULTS below contain data already filtered by the dashboard search matching the user\'s query - these are the RELEVANT entries. Base your answer ONLY on these search results. IMPORTANT RESPONSE RULES: 1) If user asks about a PERSON NAME: show ALL items, entries, wallet transactions, samples, and clipping associated with that person - include thread names, serial numbers, quantities, models, dates, sizes, amounts. 2) If user asks about a SPECIFIC DATE: show ALL entries from that date. 3) If user types a SERIAL/THREAD NUMBER: show that item\'s complete details. 4) For items: ALWAYS mention thread name, serial, quantity, model, person, date, status. 5) For clipping: clipper name, size, type, date. 6) For samples: person, program, pieces, date. 7) For wallet: exact amounts and dates. 8) For maintenance: subject, category, status, description. If search results are empty for a section, say so. Never give vague answers. Keep responses short (3-6 sentences), warm and heartfelt. No English, no Devanagari/Urdu script, no markdown tables. WhatsApp formatting only.' + dataContext;
+          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang. The SEARCH RESULTS below contain data from the business database. If the results say "matched" these are specific entries matching the user\'s query - focus your answer on ONLY those. If it says "all data - no specific match" then the user\'s query didn\'t match any specific entry - look through all data and find anything relevant, or answer as a general chat. IMPORTANT RULES: 1) If user mentions a NAME (person or thread): find and show ALL entries related to that name from ANY section - items, wallet, samples, clipping, bills. Include serial numbers, quantities, models, dates, sizes, amounts. 2) If user mentions a DATE: show entries from that date. 3) If user mentions a SERIAL/THREAD NUMBER: show complete item details. 4) For items: thread name, serial, quantity, model, person, date, status. 5) For clipping: clipper name, size, type, date. 6) For samples: person, program, pieces, date. 7) For wallet: amounts and dates. 8) For maintenance: subject, status. If no relevant data found in search results, tell the user honestly in a friendly way that you couldn\'t find anything matching their query. Keep responses short (3-6 sentences), warm and heartfelt. No English, no Devanagari/Urdu script, no markdown tables. WhatsApp formatting only.' + dataContext;
 
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
             encodeURIComponent(text) + '&model=gpt-4o&system=' + encodeURIComponent(systemPrompt);
