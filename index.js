@@ -1974,12 +1974,20 @@ async function startBot() {
 
           // ─── ALWAYS run dashboard-style search against user's message ───
           const query = lowerText;
+          // Split query into individual words for better matching (e.g. "check 1032" → ["check", "1032"])
+          const queryWords = query.split(/\s+/).filter(w => w.length >= 2);
           const fmtDt = (ts) => ts ? new Date(ts).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : 'N/A';
 
           function searchSection(data, fieldKeys) {
-            return data.filter(entry =>
-              fieldKeys(entry).some(f => f && String(f).toLowerCase().includes(query))
-            );
+            return data.filter(entry => {
+              const fields = fieldKeys(entry);
+              // Match full query OR any individual word
+              if (fields.some(f => f && String(f).toLowerCase().includes(query))) return true;
+              for (const word of queryWords) {
+                if (fields.some(f => f && String(f).toLowerCase().includes(word))) return true;
+              }
+              return false;
+            });
           }
 
           // Search each section using same field mapping as dashboard
@@ -2055,24 +2063,41 @@ async function startBot() {
 
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
             encodeURIComponent(text) + '&model=gpt-4o&system=' + encodeURIComponent(systemPrompt);
-          const aiRes = await fetch(aiUrl);
-          const aiData = await aiRes.json();
-          if (aiData.success && aiData.data?.choices?.[0]?.message?.content) {
-            let aiReply = aiData.data.choices[0].message.content
-              .replace(/#{1,6}\s+/g, '')
-              .replace(/\*\*(.*?)\*\*/g, '*$1*')
-              .replace(/```[\s\S]*?```/g, '')
-              .replace(/\|.*\|/g, '')
-              .replace(/^[-]{3,}$/gm, '')
-              .trim();
-            if (aiReply.length > 800) aiReply = aiReply.substring(0, 800) + '...';
-            await sock.sendMessage(chatId, { text: aiReply });
-          } else {
-            await sock.sendMessage(chatId, { text: '🤖 Sorry, I could not process that right now. Try again later!' });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 30000);
+          try {
+            const aiRes = await fetch(aiUrl, { signal: controller.signal });
+            clearTimeout(timeout);
+            const aiData = await aiRes.json();
+            if (aiData.success && aiData.data?.choices?.[0]?.message?.content) {
+              let aiReply = aiData.data.choices[0].message.content
+                .replace(/#{1,6}\s+/g, '')
+                .replace(/\*\*(.*?)\*\*/g, '*$1*')
+                .replace(/```[\s\S]*?```/g, '')
+                .replace(/\|.*\|/g, '')
+                .replace(/^[-]{3,}$/gm, '')
+                .trim();
+              if (aiReply.length > 800) aiReply = aiReply.substring(0, 800) + '...';
+              await sock.sendMessage(chatId, { text: aiReply });
+            } else {
+              // AI API returned no result - try to give a helpful response from data
+              if (dataContext && dataContext.length > 50) {
+                await sock.sendMessage(chatId, { text: 'Yaar AI thak gaya hai lekin data yeh hai:\n' + dataContext.substring(0, 700) });
+              } else {
+                await sock.sendMessage(chatId, { text: '🤖 Yaar abhi thora masla ho gaya, dobara try karo 🙏' });
+              }
+            }
+          } finally {
+            clearTimeout(timeout);
           }
         } catch (aiErr) {
           log('[AI] Error: ' + aiErr.message);
-          await sock.sendMessage(chatId, { text: '🤖 Sorry, I had trouble understanding. Please try again!' });
+          // If AI fails but we have data, send raw data instead of generic error
+          if (typeof dataContext === 'string' && dataContext.length > 50) {
+            await sock.sendMessage(chatId, { text: 'Yaar AI se baat nahi ho payi lekin yeh data hai tumhare liye:\n' + dataContext.substring(0, 700) });
+          } else {
+            await sock.sendMessage(chatId, { text: '🤖 Yaar abhi thora masla ho gaya, dobara try karo 🙏' });
+          }
         }
       }
 
