@@ -1069,13 +1069,11 @@ async function startBot() {
         }
 
         if (!transcribed) {
-          await sock.sendMessage(chatId, { text: 'Shor ki waja se samajh nahi aayi yaar, text bhej do dost g 🙏' });
           return;
         }
         text = transcribed;
       } catch (audioErr) {
         log('[AUDIO] Transcription error: ' + audioErr.message);
-        await sock.sendMessage(chatId, { text: 'Shor ki waja se samajh nahi aayi yaar, text bhej do dost g 🙏' });
         return;
       }
     }
