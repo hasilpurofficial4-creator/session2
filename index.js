@@ -1578,34 +1578,68 @@ async function startBot() {
             'kya hai', 'kya h', 'milay ga', 'milega', 'hay', 'hai kya', 'wallet', 'paise', 'paisa',
             'bill', 'sample', 'clipping', 'person', 'maintenance', 'kaam', 'entry', 'entries',
             'serial', 'number', 'model', 'qty', 'quantity', 'status', 'detail', 'data', 'maal',
-            'kahan', 'kahaan', 'kab', 'kis ko', 'kisko', 'kitna hai', 'kitnay', 'kitne hain'];
+            'kahan', 'kahaan', 'kab', 'kis ko', 'kisko', 'kitna hai', 'kitnay', 'kitne hain',
+            'kis ne', 'kis laya', 'laaya', 'size', 'yard', 'piece', 'program', 'salary', 'total'];
           const isDataQuery = dataKeywords.some(kw => lowerText.includes(kw));
           let dataContext = '';
 
           if (isDataQuery) {
             try {
-              const [items, wallet, bills, samples, clipping] = await Promise.all([
+              const [items, wallet, bills, samples, clipping, person] = await Promise.all([
                 fetchStockData('items').catch(() => []),
                 fetchStockData('wallet').catch(() => []),
                 fetchStockData('bills').catch(() => []),
                 fetchStockData('samples').catch(() => []),
-                fetchStockData('clipping').catch(() => [])
+                fetchStockData('clipping').catch(() => []),
+                fetchStockData('person').catch(() => [])
               ]);
               const summary = [];
-              if (items.length) summary.push('ITEMS: ' + items.length + ' entries. Latest 5: ' + items.slice(0, 5).map(i => i.name + '(Serial:' + (i.number || 'N/A') + ', Person:' + (i.person || 'N/A') + ', Model:' + (i.model || 'N/A') + ', Qty:' + (i.quantity || 1) + ', Status:' + (i.status || 'available')).join('; '));
+              if (items.length) {
+                const itemsList = items.map(i => {
+                  const dt = i.timestamp ? new Date(i.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  return i.name + ' | Serial:' + (i.number || 'N/A') + ' | Person:' + (i.person || 'N/A') + ' | Model:' + (i.model || 'N/A') + ' | Qty:' + (i.quantity || 1) + ' | Status:' + (i.status || 'available') + ' | Date:' + dt;
+                }).join('\n  ');
+                summary.push('ITEMS (' + items.length + ' total):\n  ' + itemsList);
+              }
               if (wallet.length) {
                 const totalIn = wallet.filter(e => e.type === 'in').reduce((a, e) => a + Number(e.amount || 0), 0);
                 const totalOut = wallet.filter(e => e.type === 'out').reduce((a, e) => a + Number(e.amount || 0), 0);
-                summary.push('WALLET: Total In Rs.' + totalIn + ', Total Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut));
+                const recentWallet = wallet.slice(0, 10).map(w => {
+                  const dt = w.timestamp ? new Date(w.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  return (w.type === 'in' ? 'IN' : 'OUT') + ' Rs.' + (Number(w.amount)||0) + ' ' + (w.personOrPurpose||'') + ' Date:' + dt;
+                }).join('; ');
+                summary.push('WALLET: In Rs.' + totalIn + ', Out Rs.' + totalOut + ', Balance Rs.' + (totalIn - totalOut) + '. Recent: ' + recentWallet);
               }
-              if (bills.length) summary.push('BILLS: ' + bills.length + ' bills, total Rs.' + bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0));
-              if (samples.length) summary.push('SAMPLES: ' + samples.length + ' entries');
-              if (clipping.length) summary.push('CLIPPING: ' + clipping.length + ' entries');
-              dataContext = '\n\nCURRENT STOCK DATA: ' + summary.join(' | ');
+              if (bills.length) {
+                const billsList = bills.slice(0, 10).map(b => b.personName + ' Purpose:' + (b.billPurpose||'') + ' Items:' + (Array.isArray(b.items) ? b.items.length : 0) + ' Total:Rs.' + (Number(b.totalAmount)||0) + ' Date:' + (b.date||'N/A')).join('; ');
+                summary.push('BILLS (' + bills.length + ' total, Rs.' + bills.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0) + '): ' + billsList);
+              }
+              if (samples.length) {
+                const samplesList = samples.map(s => {
+                  const dt = s.timestamp ? new Date(s.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  return (s.personName||'') + ' Program:' + (s.program||'') + ' Pieces:' + (s.pieces||'') + ' Type:' + (s.type||'') + ' Date:' + dt;
+                }).join('; ');
+                summary.push('SAMPLES (' + samples.length + '): ' + samplesList);
+              }
+              if (clipping.length) {
+                const clipList = clipping.map(c => {
+                  const dt = c.timestamp ? new Date(c.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  return (c.clipperName||'') + ' Size:' + (c.size||'') + 'yds Type:' + (c.type||'') + ' Date:' + dt;
+                }).join('; ');
+                summary.push('CLIPPING (' + clipping.length + '): ' + clipList);
+              }
+              if (person.length) {
+                const personList = person.slice(0, 10).map(p => {
+                  const dt = p.timestamp ? new Date(p.timestamp).toLocaleDateString('en-GB', { day:'2-digit', month:'short' }) : 'N/A';
+                  return (p.personName||'') + ' Action:' + (p.action||'') + ' Date:' + dt;
+                }).join('; ');
+                summary.push('PERSON/ATTENDANCE (' + person.length + '): ' + personList);
+              }
+              dataContext = '\n\nFULL STOCK DATA:\n' + summary.join('\n');
             } catch (_) {}
           }
 
-          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang like people actually talk on WhatsApp (e.g. yaar, bhai, scene on hai, full power, zabardast, chill maro, bindaas). Not joking around, just naturally fun and casual tone. Keep responses short (2-4 sentences max), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.' + dataContext;
+          const systemPrompt = 'You are a friendly assistant for a unit stock management business. ALWAYS respond in Roman Urdu or Hindi (Latin script typing like: kya haal hai bhai, mast hoon yaar, scene on hai). Use casual street-style Roman Urdu/Hindi with a little funny slang. IMPORTANT: When answering about items/stock, ALWAYS mention specific details: thread name, serial number, quantity, model number, person name (who brought/handed the item), date when item came, and status. When answering about clipping, mention clipper name, size in yards, and date. When answering about samples, mention person, program, pieces count, and date. When answering about wallet, mention exact amounts. Never give vague answers - always provide exact quantities, serial numbers, names, dates and sizes from the data provided. Keep responses short (2-5 sentences), heartfelt and warm. Do not use English, do not use Devanagari or Urdu script. Do not use markdown tables. Use minimal formatting suitable for WhatsApp.' + dataContext;
 
           const aiUrl = 'https://apis.davidcyril.name.ng/ai/chatgpt?prompt=' +
             encodeURIComponent(text) + '&model=gpt-4o&system=' + encodeURIComponent(systemPrompt);
